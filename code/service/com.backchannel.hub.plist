@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.backchannel.hub</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/bch</string>
+    <string>serve</string>
+    <!-- optional flags, one per <string>: <string>-tls</string> -->
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/backchannel-hub.log</string>
+  <key>StandardErrorPath</key><string>/tmp/backchannel-hub.log</string>
+</dict>
+</plist>
