@@ -34,6 +34,10 @@ type Config struct {
 	TLS     bool   `json:"tls,omitempty"`
 	FP      string `json:"fingerprint,omitempty"` // pinned hub certificate (SHA-256)
 
+	E2EPriv string                       `json:"e2e_priv,omitempty"` // this device's X25519 identity (base64)
+	E2EPub  string                       `json:"e2e_pub,omitempty"`  // derived public half, cached
+	E2EKeys map[string]map[string]string `json:"e2e_keys,omitempty"` // channel -> epoch (string) -> key (base64)
+
 	ClipSync bool     `json:"clip_sync,omitempty"` // sync clipboard with my other devices
 	Notify   string   `json:"notify,omitempty"`    // "off" to silence the bell (default on)
 	Active   string   `json:"active,omitempty"`    // last active channel

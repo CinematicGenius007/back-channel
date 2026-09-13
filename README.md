@@ -3,12 +3,14 @@
 A private, self-hosted set of chat channels for your own machines and a small group of
 people you trust. Type text, paste your clipboard, or drag a file into the terminal — it
 shows up on every other device in that channel and lands in their `inbox` folder. Your
-clipboard can follow you from your Mac to your Windows PC. Channels can self-destruct.
+clipboard can follow you from your Mac to your Windows PC. Channels can self-destruct,
+or be end-to-end encrypted so even the hub can't read them.
 
 One static ~6 MB binary (Go, standard library only — not even `net/http`). Idles at a few
 MB of RAM with zero CPU. Runs on macOS, Windows and Linux. No cloud, no browser, no
 runtime to install. Formerly `dropchan`; v2 adds accounts, many channels on one port,
-roles and moderation, per-account abuse limits, clipboard sync and self-destruct channels.
+roles and moderation, per-account abuse limits, clipboard sync, self-destruct channels
+and optional end-to-end encryption.
 
 ```
 ┌ mac ─────────────────────────────────────┐        ┌ windows work PC ─────────────────────────┐
@@ -31,6 +33,7 @@ roles and moderation, per-account abuse limits, clipboard sync and self-destruct
 | [ADMIN-GUIDE.md](ADMIN-GUIDE.md) | run a hub for other people: roles, invites, moderation, limits, self-destruct channels, audit |
 | [PUBLIC-SERVER.md](PUBLIC-SERVER.md) | put the hub on the internet safely (TLS, pinning, VPS, firewall, backups) |
 | [CLIPBOARD.md](CLIPBOARD.md) | clipboard sync: how it works, what it never does, platform notes |
+| [ENCRYPTION.md](ENCRYPTION.md) | end-to-end encrypted channels: how the key exchange works, what it protects and what it doesn't |
 | [PROTOCOL.md](PROTOCOL.md) | script against the hub (JSON frames, HTTP upload/download, curl) |
 | [WINDOWS-SETUP.md](WINDOWS-SETUP.md) | step-by-step Windows client install |
 | [PHASE2-DESIGN.md](PHASE2-DESIGN.md) | the design spec and the reasoning behind it |
@@ -49,6 +52,7 @@ roles and moderation, per-account abuse limits, clipboard sync and self-destruct
 | Abuse control | Limits keyed by **account**, at three levels (server → channel → user): message rate, upload rate, storage quota, size caps, auto-mute for flooding. Identical files stored once. | Sending the same file 1000 times costs one copy on disk and then hits the upload rate limit. |
 | History | Append-only `messages.jsonl`, replayed per channel from the last id a client saw. Deletions are tombstones. | Reconnect after Wi-Fi drop shows exactly the gap; offline clients learn about deletions. |
 | Self-destruct | Per-channel `expire` (10m … weeks). Hub removes messages and their files on a 15 s sweep and tells clients, which also expire locally. | Short-lived rooms without anyone doing housekeeping. |
+| End-to-end encryption | Optional per channel (`e2e=on` at creation). Each device has its own X25519 identity; the channel's AES-256 key is generated client-side, wrapped to a device's public key, and relayed by the hub — which never sees the key or plaintext. | Some rooms shouldn't be readable by the hub operator, at all. See ENCRYPTION.md. |
 | Clipboard sync | `clip` frames relayed only to *your other devices*, never stored or replayed. Opt-in per device. | Clipboards hold passwords. |
 | Storage | One `state.json` (atomic rename) + `messages.jsonl` + `audit.jsonl`. No database. | Stays stdlib-only, cross-compiles in one command, is `grep`-able. Fine for hundreds of users. |
 | Public hub | `bch serve -public`: TLS 1.3 with a self-signed cert, clients **pin the fingerprint** (SSH-style). | No domain or CA needed; a MITM is detected. See PUBLIC-SERVER.md. |
@@ -66,7 +70,7 @@ Override with `BCH_DIR` or `-dir`.
 cd code
 go build -o bch .        # for this machine
 ./build.sh               # → dist/bch-darwin-arm64, -darwin-amd64, -windows-amd64.exe, -linux-amd64, …
-go test ./...            # 20 tests: permissions matrix, secrecy rule, moderation, files, expiry, guests
+go test ./...            # permissions matrix, secrecy rule, moderation, files, expiry, guests, e2e crypto + key exchange
 ```
 
 ## Setup (5 minutes)
@@ -160,6 +164,18 @@ locally by timestamp. Files the app auto-downloaded from such a channel are remo
 your inbox when their message expires; anything you moved elsewhere is yours. The status
 bar shows `🔥 10m` while you are in one. Values: `10m`, `2h`, `7d`, `1w`, `off`.
 
+### End-to-end encrypted channels
+
+```
+/create incident-room e2e=on
+```
+The hub only ever sees ciphertext in a channel created this way — not the messages, not
+the file contents or names, not the key. A newly joined device asks for the key
+automatically and gets it from any other device that's online and already holds it;
+`/e2e status` shows whether yours does. `/e2e rotate` (mod+) issues a new key, which also
+happens automatically after a `/kick` or `/ban` in such a channel. Full design, the key
+exchange, and what this does and doesn't protect against: **ENCRYPTION.md**.
+
 ### From scripts / other terminals (no TUI)
 
 ```sh
@@ -239,10 +255,12 @@ Message latency on a LAN is one TCP round-trip; files move at whatever the link 
 
 ## Limits and honest caveats
 
-- Transport encryption yes (`-tls`); end-to-end no — **the hub operator can read
-  everything**. End-to-end channels are sketched in PHASE2-DESIGN.md §11 and not built.
-- The hub knows who is online, who is in which channel, and when. That is inherent to a
-  relay with server-side history.
+- Ordinary channels are transport-encrypted only (`-tls`): **the hub operator can read
+  everything in them**. Use `e2e=on` for a channel that shouldn't be — see ENCRYPTION.md
+  for exactly what that does and doesn't cover.
+- The hub knows who is online, who is in which channel, and when, for every channel
+  including end-to-end ones. That metadata is inherent to a relay with server-side
+  history and presence; it is not hidden by encrypting content.
 - Self-destruct removes messages from the hub and from `bch` clients. It cannot remove
   what someone copied elsewhere or a file they moved out of the inbox.
 - History replays the last 2000 messages per channel (`-history N`). Files without any

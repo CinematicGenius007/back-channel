@@ -51,6 +51,7 @@ const (
 	actPurge                // bulk delete
 	actDelete               // delete the channel
 	actTransfer             // hand ownership to someone else
+	actE2ERotate            // force a new channel key (e2e channels only)
 )
 
 // need is the minimum channel rank per action.
@@ -58,7 +59,7 @@ var need = map[act]int{
 	actRead: rankReadonly, actMembers: rankReadonly,
 	actSend: rankMember, actDelOwn: rankMember,
 	actTopic: rankMod, actInvite: rankMod, actAdd: rankMod, actKick: rankMod, actBan: rankMod, actMute: rankMod, actDelAny: rankMod,
-	actRevokeAny: rankAdmin, actRole: rankAdmin, actSettings: rankAdmin,
+	actRevokeAny: rankAdmin, actRole: rankAdmin, actSettings: rankAdmin, actE2ERotate: rankAdmin,
 	actPurge: rankOwner, actDelete: rankOwner, actTransfer: rankOwner,
 }
 

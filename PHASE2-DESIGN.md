@@ -30,7 +30,8 @@ are stated so you don't have to re-derive it.
 - Federation between hubs. One hub = one community. Simpler, and secrecy is easier.
 - Public discovery / channel directory. Contradicts goal 4.
 - Rich media rendering, threads, reactions. Nice; not this phase.
-- Perfect end-to-end encryption. §11 gives an optional design; the default is "hub can read".
+- End-to-end encryption **by default**. §11 gives an opt-in design (built — see
+  ENCRYPTION.md); a channel is "hub can read" unless created with `e2e=on`.
 
 ## 2. Can multiple channels share one port?
 
@@ -401,7 +402,11 @@ terminal bell (`\a`) and bump the count. Mentions of your name always ring.
 
 `bch send -ch design file.png` for scripts.
 
-## 11. Optional: end-to-end encrypted channels
+## 11. End-to-end encrypted channels
+
+Written as an optional, build-last idea. It was built. This section is kept as the
+original design note for context; **ENCRYPTION.md** is the accurate, current reference,
+and **§15** below records exactly where the implementation departs from what follows.
 
 If some channels must be unreadable by the hub operator:
 
@@ -419,8 +424,6 @@ If some channels must be unreadable by the hub operator:
   members; old messages stay readable to whoever had the old key — that's inherent).
 - Search, retention, and moderation of *content* stop working for the hub in E2E channels;
   moderation becomes membership-only. Make that explicit in the `/create --e2e` help text.
-
-Build this last, and only if needed. It roughly doubles client complexity.
 
 ## 12. Migration from v1
 
@@ -508,9 +511,14 @@ Built in `code/` as v2.0.0. Deviations from the sections above, with the reason:
 | `useradd`/`passwd` only | `usermod pass=` (admin reset, revokes all sessions), `sessions revoke`, `logout all` | the lockout stories from §14 |
 | — | **clipboard sync** (`clip` frames, user-scoped, never stored; native Win32 clipboard) | new requirement; see CLIPBOARD.md |
 | — | guests get a stable negative pseudo-id from their nick | presence, rate limits and clipboard routing work for guests without storing accounts |
+| public key registered "at signup" (§11) | registered on every `hello` that carries one, per **device** (not once per account) | a private key can't be copied between devices without an out-of-band step anyway; each device generating and registering its own identity is the honest version of that, and matches how sessions already work per device |
+| XChaCha20-Poly1305 via `golang.org/x/crypto` (§11) | AES-256-GCM via `crypto/aes` + `crypto/cipher` (stdlib) | keeps the stdlib-only rule; AES-NI makes it fast in practice, and Go's stdlib has no XChaCha20 |
+| `keyshare` as a persisted **message** (§11) | `keyreq`/`keyshare` as live-only frames, exactly like `clip` — never written to `messages.jsonl`, never replayed | a compromised hub disk should not be able to contain even a wrapped copy of a channel key; the cost is that key delivery only happens between two devices online at the same moment (see ENCRYPTION.md §4) |
+| files "encrypted client-side" (§11), no detail | filenames sealed the same way as message text; whole-file single-shot AES-256-GCM rather than a chunked stream cipher | closes an obvious metadata leak (filenames) for a few extra lines; chunking was skipped because AES-GCM's per-nonce limit is far above `max_file_mb`, so a single seal is simpler and still correct — at the cost of buffering the whole file in memory on both ends (see ENCRYPTION.md §6) |
+| rotation unspecified beyond "creator or admin" | `actE2ERotate` = channel admin+ (like `actSettings`), not owner-only; auto-triggered client-side after a successful `/kick` or `/ban` in an e2e channel if the acting device holds the key, else a nudge to rotate from one that does | matches §11's "rotate on kick/ban" recommendation without needing the hub to run any cryptography |
 
-Not built: §11 end-to-end channels (design stands), Alt/Ctrl key bindings (cooked-mode TUI
-cannot see them reliably; `/1`…`/9`, `/n`, `/p`, `/c NAME` instead), @mention autocompletion.
+Not built: Alt/Ctrl key bindings (cooked-mode TUI cannot see them reliably; `/1`…`/9`,
+`/n`, `/p`, `/c NAME` instead), @mention autocompletion.
 
 Tests (`go test ./...`): the full §4 matrix cell by cell; `canTarget` rules; the
 existence-oracle rule (byte-identical `nochan` for `sub` and `cmd`); invite sign-up and
@@ -518,4 +526,6 @@ single use; kick/ban/unban flow; read-only, mute, rate limit and auto-mute; v1/g
 compatibility; file membership checks, dedup accounting, quota, per-channel max file,
 reclaim on purge; clipboard routing (never to another user, never stored); read sync;
 server admin/owner rules; password reset; expiry sweep incl. file deletion and replay
-filtering; store round-trip on restart.
+filtering; store round-trip on restart; e2e crypto round trips (text, file, key wrap,
+tamper detection), the full hub-relayed keyreq/keyshare flow asserting the log never
+holds plaintext, and rotation permission (channel admin+ only).

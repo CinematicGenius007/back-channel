@@ -7,6 +7,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/ecdh"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -21,6 +23,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +44,10 @@ type chanState struct {
 	unread            int
 	readonly          bool
 	expire            int64 // seconds; >0 = self-destruct channel
+	e2e               bool  // end-to-end encrypted: this client must hold the key to read it
+	epoch             int   // e2e: current key epoch for this channel
+	keyReqSent        bool  // avoid spamming keyreq while we wait for a reply
+	pendingEnc        []Msg // ciphertext frames received before we had the key to open them
 	texts             map[int64]string
 	files             map[int64]Msg
 	saved             map[int64]string // message id → path we downloaded to (for cleanup on expiry)
@@ -128,6 +135,7 @@ type client struct {
 	tcpAddr  string
 	httpAddr string
 	tlsCfg   *tls.Config
+	e2ePriv  *ecdh.PrivateKey
 
 	mu          sync.Mutex // guards conn
 	conn        net.Conn
@@ -238,6 +246,7 @@ func newClient(cfg Config, dir string) *client {
 	}
 	os.MkdirAll(filepath.Join(dir, "inbox"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "outbox", "sent"), 0o755)
+	c.ensureDeviceKey()
 	return c
 }
 
@@ -300,7 +309,7 @@ func (c *client) loginOnce(a Auth) (Msg, error) {
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(20 * time.Second))
-	writeJSON(conn, Msg{T: "hello", V: protoVersion, Device: c.snapshot().Name, Auth: &a})
+	writeJSON(conn, Msg{T: "hello", V: protoVersion, Device: c.snapshot().Name, Auth: &a, Pub: c.snapshot().E2EPub})
 	sc := bufio.NewScanner(conn)
 	sc.Buffer(make([]byte, 64<<10), 16<<20)
 	for sc.Scan() {
@@ -370,9 +379,9 @@ func (c *client) connectLoop() {
 		var hello Msg
 		switch {
 		case cfg.Session != "":
-			hello = Msg{T: "hello", V: protoVersion, Device: cfg.Name, Auth: &Auth{Session: cfg.Session}}
+			hello = Msg{T: "hello", V: protoVersion, Device: cfg.Name, Auth: &Auth{Session: cfg.Session}, Pub: cfg.E2EPub}
 		case cfg.Token != "":
-			hello = Msg{T: "hello", V: protoVersion, Name: cfg.Name, Device: cfg.Name, Token: cfg.Token, Since: c.legacySince.Load()}
+			hello = Msg{T: "hello", V: protoVersion, Name: cfg.Name, Device: cfg.Name, Token: cfg.Token, Since: c.legacySince.Load(), Pub: cfg.E2EPub}
 		default:
 			c.status("no credentials — /login NAME")
 			c.authWait.Store(true)
@@ -495,6 +504,24 @@ func (c *client) cmd(name string, args map[string]string, cb func(Msg)) {
 	}
 }
 
+// cmdOn is cmd but targets an explicit channel rather than the currently active one —
+// needed when a background flow (e.g. reshareToOnlinePeers) must not be derailed by the
+// user switching channels while it runs.
+func (c *client) cmdOn(chName, name string, args map[string]string, cb func(Msg)) {
+	c.rid++
+	rid := fmt.Sprintf("c%d", c.rid)
+	ch := chName
+	if c.legacy {
+		ch = ""
+	}
+	if cb != nil {
+		c.waiting[rid] = cb
+	}
+	if err := c.write(Msg{T: "cmd", RID: rid, Name: name, Ch: ch, Args: args}); err != nil {
+		delete(c.waiting, rid)
+	}
+}
+
 // ---- files ------------------------------------------------------------------
 
 func (c *client) authHeaders() map[string]string {
@@ -519,18 +546,44 @@ func (c *client) upload(chName, path string) error {
 		return fmt.Errorf("%s is a directory (zip it first)", filepath.Base(path))
 	}
 	cfg := c.snapshot()
-	target := "/up?name=" + escape(filepath.Base(path)) + "&from=" + escape(cfg.Name) + "&device=" + escape(cfg.Name)
+	name := filepath.Base(path)
+	var reqBody io.Reader = f
+	size := st.Size()
+	epoch := 0
+	if ch := c.chanByName(chName); ch != nil && ch.e2e {
+		key, ok := c.chanKey(ch.name, ch.epoch)
+		if !ok {
+			return fmt.Errorf("no channel key for #%s yet — /e2e status", chName)
+		}
+		plain, err := io.ReadAll(f)
+		if err != nil {
+			return err
+		}
+		ct, err := encryptFile(key, ch.name, ch.epoch, plain)
+		if err != nil {
+			return err
+		}
+		encName, err := encryptText(key, ch.name, ch.epoch, name)
+		if err != nil {
+			return err
+		}
+		reqBody, size, name, epoch = bytes.NewReader(ct), int64(len(ct)), encName, ch.epoch
+	}
+	target := "/up?name=" + escape(name) + "&from=" + escape(cfg.Name) + "&device=" + escape(cfg.Name)
 	if chName != "" && !c.legacy {
 		target += "&ch=" + escape(chName)
 	}
+	if epoch > 0 {
+		target += "&epoch=" + strconv.Itoa(epoch)
+	}
 	c.status(fmt.Sprintf("uploading %s (%s) to #%s…", filepath.Base(path), humanSize(st.Size()), chName))
-	status, _, body, conn, err := httpDo(c.dial, c.httpAddr, "PUT", target, c.authHeaders(), f, st.Size())
+	status, _, respBody, conn, err := httpDo(c.dial, c.httpAddr, "PUT", target, c.authHeaders(), reqBody, size)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 	if status != 200 {
-		b, _ := io.ReadAll(body)
+		b, _ := io.ReadAll(respBody)
 		return fmt.Errorf("hub: %d %s", status, strings.TrimSpace(string(b)))
 	}
 	c.status("")
@@ -551,6 +604,29 @@ func (c *client) download(m Msg) (string, error) {
 		dir = filepath.Join(dir, sanitizeName(m.Ch))
 	}
 	os.MkdirAll(dir, 0o755)
+	if ch := c.chanByName(m.Ch); ch != nil && ch.e2e {
+		key, ok := c.chanKey(ch.name, m.Epoch)
+		if !ok {
+			return "", fmt.Errorf("no channel key for epoch %d yet — /e2e status", m.Epoch)
+		}
+		ct, err := io.ReadAll(body)
+		if err != nil {
+			return "", err
+		}
+		plain, err := decryptFile(key, ch.name, m.Epoch, ct)
+		if err != nil {
+			return "", fmt.Errorf("decryption failed (wrong key, or the file was tampered with): %w", err)
+		}
+		name := m.Name
+		if dn, err := decryptText(key, ch.name, m.Epoch, m.Name); err == nil {
+			name = dn
+		}
+		dest := uniquePath(filepath.Join(dir, sanitizeName(name)))
+		if err := os.WriteFile(dest, plain, 0o644); err != nil {
+			return "", err
+		}
+		return dest, nil
+	}
 	dest := uniquePath(filepath.Join(dir, sanitizeName(m.Name)))
 	tmp := dest + ".part"
 	f, err := os.Create(tmp)
@@ -948,8 +1024,13 @@ func (c *client) handleEvent(m Msg) {
 		}
 		c.drawStatus()
 	case "join":
+		ch := c.chanFor(m.Ch)
 		if !c.isMe(m.From) {
-			c.sysIn(c.chanFor(m.Ch), m.From+" joined")
+			c.sysIn(ch, m.From+" joined")
+			if ch.e2e { // a peer who might hold the key just came online — ask again
+				ch.keyReqSent = false
+				c.maybeRequestKey(ch)
+			}
 		}
 	case "part":
 		if !c.isMe(m.From) {
@@ -1015,6 +1096,10 @@ func (c *client) handleEvent(m Msg) {
 		c.sys("⚠ " + m.Text)
 	case "clip":
 		c.onClip(m)
+	case "keyreq":
+		c.onKeyReq(m)
+	case "keyshare":
+		c.onKeyShare(m)
 	case "who":
 		c.sysIn(c.chanFor(m.Ch), "online: "+strings.Join(m.Users, ", "))
 	case "res", "err":
@@ -1047,12 +1132,17 @@ func (c *client) printRes(m Msg) {
 func (c *client) applyInfo(ci ChanInfo) *chanState {
 	ch := c.ensureChan(ci.Name)
 	ch.topic, ch.role, ch.readonly, ch.expire = ci.Topic, ci.Role, ci.Readonly, ci.Expire
+	ch.e2e = ci.E2E
+	if ci.Epoch > ch.epoch {
+		ch.epoch = ci.Epoch
+	}
 	if ci.Last > ch.lastID {
 		ch.lastID = ci.Last
 	}
 	if ch != c.active {
 		ch.unread = ci.Unread
 	}
+	c.maybeRequestKey(ch)
 	return ch
 }
 
@@ -1154,17 +1244,52 @@ func (c *client) onMsg(m Msg) {
 	if c.legacy && m.ID > c.legacySince.Load() {
 		c.legacySince.Store(m.ID)
 	}
-	mine := c.isMe(m.From)
-	mention := !mine && c.me != "" && strings.Contains(strings.ToLower(m.Text), "@"+strings.ToLower(c.me))
-	var text string
-	if m.T == "msg" {
-		ch.texts[m.ID] = m.Text
-		text = fmtMsg(m, mention)
-	} else {
-		ch.files[m.ID] = m
-		text = fmtFile(m)
+	if ch.e2e {
+		if _, ok := c.chanKey(ch.name, m.Epoch); !ok {
+			ch.pendingEnc = append(ch.pendingEnc, m)
+			if len(ch.pendingEnc) == 1 {
+				c.sysIn(ch, "🔒 waiting for the channel key — /e2e status")
+			}
+			return
+		}
 	}
-	c.addLineID(ch, m.ID, m.TS, text)
+	c.renderMsg(ch, m)
+}
+
+// renderMsg decrypts (for e2e channels), displays, updates unread/bell state, and
+// triggers auto-download for one message or file frame. Called directly for anything
+// we can already read, and again from onKeyShare for whatever an e2e channel had to
+// hold back in ch.pendingEnc until its key arrived.
+func (c *client) renderMsg(ch *chanState, m Msg) {
+	text, displayName := m.Text, m.Name
+	if ch.e2e {
+		key, ok := c.chanKey(ch.name, m.Epoch)
+		if !ok {
+			ch.pendingEnc = append(ch.pendingEnc, m) // e.g. a rotation moved on before this arrived
+			return
+		}
+		if m.T == "msg" {
+			pt, err := decryptText(key, ch.name, m.Epoch, m.Text)
+			if err != nil {
+				c.sysIn(ch, fmt.Sprintf("🔒 #%d could not be decrypted (wrong key?)", m.ID))
+				return
+			}
+			text = pt
+		} else if dn, err := decryptText(key, ch.name, m.Epoch, m.Name); err == nil {
+			displayName = dn
+		}
+	}
+	mine := c.isMe(m.From)
+	mention := !mine && c.me != "" && strings.Contains(strings.ToLower(text), "@"+strings.ToLower(c.me))
+	var line string
+	if m.T == "msg" {
+		ch.texts[m.ID] = text
+		line = fmtMsg(Msg{ID: m.ID, TS: m.TS, From: m.From, Text: text}, mention)
+	} else {
+		ch.files[m.ID] = m // keep the frame as the hub sent it (maybe a ciphertext name) for /get
+		line = fmtFile(Msg{ID: m.ID, TS: m.TS, From: m.From, Name: displayName, Size: m.Size})
+	}
+	c.addLineID(ch, m.ID, m.TS, line)
 	if ch == c.active {
 		if !m.Hist {
 			c.markRead(ch)
@@ -1273,23 +1398,19 @@ func runSend(args []string) {
 	cfg, dir, f := parseClientFlags("send", flags)
 	c := newClient(cfg, dir)
 	c.bootstrapAuth(f)
-	ch := f.ch
-	if ch == "" {
-		ch = c.snapshot().Active
+	chName := f.ch
+	if chName == "" {
+		chName = c.snapshot().Active
 	}
 	payload := strings.Join(rest, " ")
 	if payload == "" || payload == "-" { // stdin
 		b, _ := io.ReadAll(os.Stdin)
 		payload = strings.TrimRight(string(b), "\r\n")
 	}
-	if p := asFilePath(payload); p != "" {
-		if err := c.upload(ch, p); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-		fmt.Println("sent", filepath.Base(p))
-		return
-	}
+
+	// Connect and log in before deciding file vs. text: either path needs to know
+	// whether the target channel is end-to-end encrypted, which only the hub's
+	// channel list (in the `ok` frame) can tell us.
 	conn, err := c.dial(c.tcpAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -1299,9 +1420,9 @@ func runSend(args []string) {
 	c.conn = conn
 	cfg = c.snapshot()
 	if cfg.Session != "" {
-		c.write(Msg{T: "hello", V: protoVersion, Device: cfg.Name, Auth: &Auth{Session: cfg.Session}})
+		c.write(Msg{T: "hello", V: protoVersion, Device: cfg.Name, Auth: &Auth{Session: cfg.Session}, Pub: cfg.E2EPub})
 	} else {
-		c.write(Msg{T: "hello", V: protoVersion, Name: cfg.Name, Device: cfg.Name, Token: cfg.Token, Since: 1 << 62})
+		c.write(Msg{T: "hello", V: protoVersion, Name: cfg.Name, Device: cfg.Name, Token: cfg.Token, Since: 1 << 62, Pub: cfg.E2EPub})
 	}
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	sc := bufio.NewScanner(conn)
@@ -1311,6 +1432,9 @@ func runSend(args []string) {
 		var m Msg
 		json.Unmarshal(sc.Bytes(), &m)
 		if m.T == "ok" {
+			for _, ci := range m.Channels {
+				c.applyInfo(ci) // so chanByName(chName) below knows whether it's e2e
+			}
 			gotOK = true
 			break
 		}
@@ -1323,7 +1447,22 @@ func runSend(args []string) {
 		fmt.Fprintln(os.Stderr, "error: no reply from hub — wrong port, or the hub uses TLS (try -hub tls://HOST)")
 		os.Exit(1)
 	}
-	c.write(Msg{T: "msg", Ch: ch, Text: payload, RID: "send"})
+
+	if p := asFilePath(payload); p != "" {
+		if err := c.upload(chName, p); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		fmt.Println("sent", filepath.Base(p))
+		return
+	}
+
+	text, epoch, ok := c.encryptForSend(c.chanByName(chName), payload)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "error: #%s is end-to-end encrypted and this device has no saved key for it — open it once in the %s TUI so it can receive the key, then try again\n", chName, binName)
+		os.Exit(1)
+	}
+	c.write(Msg{T: "msg", Ch: chName, Text: text, Epoch: epoch, RID: "send"})
 	conn.SetReadDeadline(time.Now().Add(700 * time.Millisecond))
 	for sc.Scan() { // give the hub a moment to refuse (rate limit, read-only, no such channel)
 		var m Msg
@@ -1332,7 +1471,7 @@ func runSend(args []string) {
 			fmt.Fprintln(os.Stderr, "error:", m.Text)
 			os.Exit(1)
 		}
-		if m.T == "msg" && m.Text == payload && !m.Hist {
+		if m.T == "msg" && m.Text == text && !m.Hist {
 			break
 		}
 	}

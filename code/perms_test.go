@@ -22,6 +22,7 @@ func TestPermissionMatrix(t *testing.T) {
 		actRevokeAny: {false, false, false, true, true, true, true},
 		actRole:      {false, false, false, true, true, true, true},
 		actSettings:  {false, false, false, true, true, true, true},
+		actE2ERotate: {false, false, false, true, true, true, true},
 		actPurge:     {false, false, false, false, true, true, true},
 		actDelete:    {false, false, false, false, true, true, true},
 		actTransfer:  {false, false, false, false, true, true, true},

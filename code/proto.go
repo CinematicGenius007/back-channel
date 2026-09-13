@@ -41,6 +41,7 @@ type Msg struct {
 	Last     int64      `json:"last,omitempty"`     // synced: last id in channel
 	Device   string     `json:"device,omitempty"`   // hello: client label ("mac", "win-work")
 	Auth     *Auth      `json:"auth,omitempty"`     // hello v2
+	Pub      string     `json:"pub,omitempty"`      // hello: this device's X25519 identity public key (base64)
 	User     string     `json:"user,omitempty"`     // ok: your username
 	Role     string     `json:"role,omitempty"`     // ok: your server role; role event: new channel role
 	Session  string     `json:"session,omitempty"`  // ok: session token (only after password/invite login)
@@ -49,11 +50,28 @@ type Msg struct {
 	Users    []string   `json:"users,omitempty"`    // who / v1 ok
 	Until    int64      `json:"until,omitempty"`    // muted/banned: unix millis
 
+	// end-to-end encryption (see ENCRYPTION.md and e2e.go)
+	Epoch    int    `json:"epoch,omitempty"`     // msg/file: the key epoch it was sealed with · keyreq/keyshare: which epoch · settings: channel's current epoch
+	ToUser   string `json:"to_user,omitempty"`   // keyshare: recipient account
+	ToDevice string `json:"to_device,omitempty"` // keyshare: recipient device label
+	FromUser string `json:"from_user,omitempty"` // keyreq (hub-filled): requester's account
+	FromDev  string `json:"from_dev,omitempty"`  // keyreq (hub-filled): requester's device label
+	FromPub  string `json:"from_pub,omitempty"`  // keyreq/keyshare: sender's device public key (base64)
+	Wrapped  string `json:"wrapped,omitempty"`   // keyshare: base64(nonce||ciphertext) wrapping the channel key
+	Peers    []Peer `json:"peers,omitempty"`     // res: e2epeers
+
 	// cmd / res / err
 	Code  string            `json:"code,omitempty"`  // err/res: machine-readable error code
 	OK    bool              `json:"ok,omitempty"`    // res
 	Args  map[string]string `json:"args,omitempty"`  // cmd
 	Lines []string          `json:"lines,omitempty"` // res: tabular output
+}
+
+// Peer is one currently-connected device of a channel member, for key distribution.
+type Peer struct {
+	User   string `json:"user"`
+	Device string `json:"device"`
+	Pub    string `json:"pub"`
 }
 
 // Auth is the v2 hello credential. Exactly one of the three forms is used:
@@ -81,6 +99,8 @@ type ChanInfo struct {
 	Members  int    `json:"members,omitempty"`
 	Default  bool   `json:"default,omitempty"`
 	Expire   int64  `json:"expire,omitempty"` // seconds; messages older than this self-destruct
+	E2E      bool   `json:"e2e,omitempty"`    // end-to-end encrypted: hub only ever sees ciphertext
+	Epoch    int    `json:"epoch,omitempty"`  // e2e: current key epoch (0 if not e2e)
 }
 
 // LimitInfo tells a client what the hub will accept from it.

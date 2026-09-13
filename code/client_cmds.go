@@ -73,11 +73,16 @@ func (c *client) handleInput(line string) bool {
 			c.sys(fmt.Sprintf("too long for one message (hub limit %s) — send it as a file", humanSize(c.maxMsg.Load())))
 			return true
 		}
+		text, epoch, ok := c.encryptForSend(c.active, line)
+		if !ok {
+			c.sys("no channel key yet for #" + c.active.name + " — /e2e status")
+			return true
+		}
 		ch := ""
 		if !c.legacy {
 			ch = c.active.name
 		}
-		if err := c.write(Msg{T: "msg", Ch: ch, Text: line}); err != nil {
+		if err := c.write(Msg{T: "msg", Ch: ch, Text: text, Epoch: epoch}); err != nil {
 			c.sys("not sent (offline): " + line)
 		}
 		return true
@@ -141,7 +146,7 @@ func (c *client) handleInput(line string) bool {
 		})
 	case "create":
 		if len(f) == 0 {
-			c.sys("usage: /create NAME [topic words…] [readonly=on]")
+			c.sys("usage: /create NAME [topic words…] [readonly=on] [e2e=on] [expire=10m|2h|7d]")
 			return true
 		}
 		args, plain := kv(f[1:])
@@ -200,7 +205,13 @@ func (c *client) handleInput(line string) bool {
 			c.sys("usage: /kick NAME [reason]")
 			return true
 		}
-		c.cmd("kick", map[string]string{"user": f[0], "reason": strings.Join(f[1:], " ")}, nil)
+		kicked := c.active
+		c.cmd("kick", map[string]string{"user": f[0], "reason": strings.Join(f[1:], " ")}, func(m Msg) {
+			c.printRes(m)
+			if m.OK && kicked != nil {
+				c.afterModeration(kicked.name) // e2e channels: nudge a key rotation
+			}
+		})
 	case "ban":
 		if len(f) == 0 {
 			c.sys("usage: /ban NAME [days] [reason]   (0 or no days = permanent)")
@@ -215,7 +226,13 @@ func (c *client) handleInput(line string) bool {
 			}
 		}
 		args["reason"] = strings.Join(rest, " ")
-		c.cmd("ban", args, nil)
+		banned := c.active
+		c.cmd("ban", args, func(m Msg) {
+			c.printRes(m)
+			if m.OK && banned != nil {
+				c.afterModeration(banned.name)
+			}
+		})
 	case "unban":
 		c.cmd("unban", map[string]string{"user": arg}, nil)
 	case "bans":
@@ -365,11 +382,16 @@ func (c *client) handleInput(line string) bool {
 			c.sys("clipboard empty or unavailable")
 			return true
 		}
+		text, epoch, ok := c.encryptForSend(c.active, strings.TrimRight(txt, "\r\n"))
+		if !ok {
+			c.sys("no channel key yet for #" + c.active.name + " — /e2e status")
+			return true
+		}
 		ch := ""
 		if !c.legacy && c.active != nil {
 			ch = c.active.name
 		}
-		if err := c.write(Msg{T: "msg", Ch: ch, Text: strings.TrimRight(txt, "\r\n")}); err != nil {
+		if err := c.write(Msg{T: "msg", Ch: ch, Text: text, Epoch: epoch}); err != nil {
 			c.sys("not sent (offline)")
 		}
 	case "copy", "y":
@@ -395,6 +417,10 @@ func (c *client) handleInput(line string) bool {
 		}
 	case "clip":
 		c.clipCmd(arg)
+	case "e2e":
+		c.e2eCmd(f)
+	case "verify":
+		c.verifyCmd(arg)
 	case "notify":
 		c.update(func(cf *Config) {
 			if arg == "off" {
@@ -618,7 +644,7 @@ var builtins = map[string]bool{}
 func isBuiltin(cmd string) bool { return builtins[cmd] }
 
 func init() {
-	for _, k := range strings.Fields("q quit exit help h c ch switch go n next p prev channels list ls create join leave delete topic members m who w invite invites revoke add kick ban unban bans mute unmute role transfer del rm purge settings login register passwd sessions logout admin a send s f get g open o watch paste pa copy y clip notify clear") {
+	for _, k := range strings.Fields("q quit exit help h c ch switch go n next p prev channels list ls create join leave delete topic members m who w invite invites revoke add kick ban unban bans mute unmute role transfer del rm purge settings login register passwd sessions logout admin a send s f get g open o watch paste pa copy y clip e2e verify notify clear") {
 		builtins[k] = true
 	}
 }
@@ -629,6 +655,7 @@ func (c *client) help(topic string) {
 		bold("files") + "      drag a file in + Enter   /send PATH   /get [#id]   /open   /watch [NAME]   (outbox/<channel>/ also works)",
 		bold("clipboard") + "  /paste (clipboard → channel)   /copy [#id] (message → clipboard)   /clip on|off|push|pull (sync between my devices)",
 		bold("messages") + "   /del #id   @NAME to mention   /notify on|off   /clear",
+		bold("encryption") + " /create NAME e2e=on   /e2e status|rotate|reshare   /verify NAME (compare device fingerprints) — see ENCRYPTION.md",
 		bold("mod+") + "       /topic TEXT   /invite [uses] [hours] [role]   /invites   /revoke CODE   /add NAME   /kick NAME [why]   /ban NAME [days] [why]   /unban NAME   /bans   /mute NAME [min]   /unmute NAME",
 		bold("admin+") + "     /role NAME readonly|member|mod|admin   /settings expire=10m|2h|7d|off readonly=on|off max_file_mb=N   /purge NAME|last N|before #id (owner)   /transfer NAME (owner)   /delete NAME (owner)",
 		bold("account") + "    /login NAME   /register CODE NAME   /passwd   /sessions [revoke ID]   /logout [all]",

@@ -1,8 +1,9 @@
 # backchannel — Admin Guide
 
 How to run a hub for other people: accounts, channels, roles, invites, moderation, limits,
-self-destruct channels, the audit log, and the operations you will actually need. Every
-command below is typed inside the `bch` TUI unless it starts with `bch serve`.
+self-destruct channels, end-to-end encryption, the audit log, and the operations you will
+actually need. Every command below is typed inside the `bch` TUI unless it starts with
+`bch serve`.
 
 ---
 
@@ -63,6 +64,7 @@ Channel roles: **owner** › **admin** › **mod** › **member** › **readonly
 | kick / ban / mute | ✓ | ✓ | ✓ | ≤ | ≤ | – | – |
 | revoke others' invites, change roles | ✓ | ✓ | ✓ | ≤ | – | – | – |
 | channel settings (expire, read-only, max file, rate) | ✓ | ✓ | ✓ | ✓ | – | – | – |
+| rotate an e2e channel's key | ✓ | ✓ | ✓ | ✓ | – | – | – |
 | purge, delete channel, transfer ownership | ✓ | ✓ | ✓ | – | – | – | – |
 | create channel | ✓ | ✓ | any user if `allow_user_channels` is on | | | | |
 | create user, reset password, ban user hub-wide, read audit, stats, prune | ✓ | ≤ | – | – | – | – | – |
@@ -75,7 +77,7 @@ implemented in exactly one place (`perms.go`) and tested cell by cell.
 ## 4. Channels
 
 ```
-/create NAME [topic words…] [readonly=on] [expire=10m]
+/create NAME [topic words…] [readonly=on] [expire=10m] [e2e=on]
 /channels                   list yours (server admins see all)
 /topic New topic            mod+
 /members                    who is in here, roles, who's online, who's muted
@@ -201,7 +203,33 @@ Values: `10m`, `2h`, `7d`, `1w`, `off` (minimum 1 minute). What happens:
 What it is not: end-to-end encryption or a guarantee against screenshots. It is
 housekeeping that doesn't depend on anyone remembering to do it.
 
-## 8. Limits — what stops what
+## 8. End-to-end encrypted channels
+
+```
+/create incident-room e2e=on          only settable at creation
+/e2e status                            am I unlocked here? what epoch?
+/e2e rotate                            admin+: new key, shared with everyone online now
+/e2e reshare                           re-send the current key without a new epoch
+/verify NAME                           compare a member's device fingerprint out of band
+```
+The hub stores and forwards only ciphertext for these channels — not the message text,
+not file contents or names, not the key itself at any point. Each device has its own
+key pair; a joining device asks for the channel's key automatically and receives it from
+whichever other device is online and already holds it. If nobody who holds it is online
+yet, the channel just stays locked for that device until someone is — nothing is lost or
+insecurely cached in the meantime.
+
+Kicking or banning someone from an e2e channel automatically triggers a key rotation from
+whichever device performed it, if that device holds the key; otherwise `bch` tells you so
+you can run `/e2e rotate` from one that does. Rotation is forward-only: it stops a former
+member from reading anything new, but cannot retroactively protect what they already saw.
+
+This is real protection against the hub operator, and against anyone who gets into the
+hub's disk or database — but it is not magic. Who is in the channel, when, and roughly
+how much they sent is still visible to the hub. Full design, the exact cryptography, and
+an honest list of what it doesn't cover: **ENCRYPTION.md**.
+
+## 9. Limits — what stops what
 
 Three levels, most specific non-zero value wins: **server default → channel override →
 user override**. Server defaults via `/admin set KEY VALUE`; channel via `/settings`;
@@ -231,7 +259,7 @@ are sent (HTTP `Expect: 100-continue`), so a rejected 2 GB upload costs nothing.
 `-public` sets `msg_rate 3` and `upload_rate 12` on a hub's first start. Flags given to
 `bch serve` (`-msg-rate`, `-max-file`, `-quota`, …) override and persist the setting.
 
-## 9. Sessions and devices
+## 10. Sessions and devices
 
 Clients store a session token, not the password. Each user can see and cut their own:
 ```
@@ -244,7 +272,7 @@ Clients store a session token, not the password. Each user can see and cut their
 Admins: `/admin mod NAME pass=NEW` resets a password and revokes all their sessions;
 `/admin ban` cuts live connections immediately.
 
-## 10. Audit log and stats
+## 11. Audit log and stats
 
 ```
 /admin audit [N] [user=NAME] [ch=NAME]     last N entries (default 30)
@@ -256,7 +284,7 @@ mute/unmute/automute, role changes, transfers, del (others' messages), purge, se
 useradd/userban/usermod, server settings, prune, failed logins. Members cannot read it.
 On disk: `hub/audit.jsonl`, one JSON object per line, never rewritten.
 
-## 11. Server settings reference (`/admin set`, owner only)
+## 12. Server settings reference (`/admin set`, owner only)
 
 | key | values | meaning |
 |---|---|---|
@@ -266,11 +294,11 @@ On disk: `hub/audit.jsonl`, one JSON object per line, never rewritten.
 | `guest_access` | on/off | accept `-token` / v1 clients |
 | `legacy_token` | text or `new` | the guest token |
 | `max_users`, `max_channels` | numbers | ceilings |
-| all limit keys from §8 | | server defaults |
+| all limit keys from §9 | | server defaults |
 
 `/admin set` with no arguments prints everything.
 
-## 12. Common situations
+## 13. Common situations
 
 **Someone leaves the group.** `/admin ban NAME` (hub-wide) or `/kick NAME` from specific
 channels. Nothing else needs to change — no shared secret to rotate. If they had the
@@ -296,7 +324,7 @@ removes the latter; `/admin users` shows who holds what; lower `quota_mb` or set
 `messages.jsonl`, `audit.jsonl`, `files/`, and `cert.pem`/`key.pem` if TLS). Clients
 reconnect to the new address; sessions stay valid because they live in `state.json`.
 
-## 13. Data layout and backups
+## 14. Data layout and backups
 
 ```
 ~/backchannel/hub/
@@ -309,10 +337,15 @@ reconnect to the new address; sessions stay valid because they live in `state.js
 Back up the directory as a whole. `state.json` is rewritten atomically (temp file +
 rename), so a copy is always a consistent snapshot. The hub also saves on Ctrl-C.
 
-## 14. Honest limits
+## 15. Honest limits
 
-- The hub operator can read everything. E2E channels (PHASE2-DESIGN.md §11) are not built.
-- Server admins are listed in every channel and can read every channel. Choose them
-  accordingly; it is also why only the owner can appoint them.
+- The hub operator can read everything in an ordinary channel. Use `e2e=on` (§8) for a
+  channel that shouldn't be readable by the hub — and read ENCRYPTION.md for what even
+  that does and doesn't cover.
+- Server admins count as a member of every channel, e2e ones included — they can `/join`
+  freely, appear in `/e2e status`'s peer list, and can send a `keyreq` that a peer
+  answers the same as anyone else's. e2e channels are not carved out from server-admin
+  oversight; choosing who gets that role is what actually limits this, which is also why
+  only the owner can appoint one.
 - Mods can probe whether a username exists via `/add NAME`. Members cannot.
 - Self-destruct is housekeeping, not a security boundary (§7).

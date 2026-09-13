@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -170,6 +171,7 @@ func (h *hub) upload(conn net.Conn, req *httpReq, s *session) {
 	u := s.user
 	name := sanitizeName(req.query["name"])
 	device := req.query["device"]
+	epoch, _ := strconv.Atoi(req.query["epoch"])
 
 	// ---- admission: everything that can be decided before the bytes arrive ----
 	h.mu.Lock()
@@ -270,7 +272,7 @@ func (h *hub) upload(conn net.Conn, req *httpReq, s *session) {
 		os.WriteFile(filepath.Join(h.dir, "files", fid+".sha256"), []byte(sum), 0o644)
 		h.markDirty()
 	}
-	h.post(ch, Msg{T: "file", From: u.Name, Device: device, Name: name, Size: n, FID: fid, Sha: sum})
+	h.post(ch, Msg{T: "file", From: u.Name, Device: device, Name: name, Size: n, FID: fid, Sha: sum, Epoch: epoch})
 	h.refFile(fid, ch.ID)
 	if quota > 0 && !s.guest {
 		after := h.used[u.ID]

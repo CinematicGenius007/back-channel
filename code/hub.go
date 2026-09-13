@@ -443,6 +443,10 @@ func (h *hub) handleConn(conn net.Conn) {
 			h.mu.Unlock()
 		case "read":
 			h.handleRead(s, m)
+		case "keyreq":
+			h.handleKeyReq(s, m)
+		case "keyshare":
+			h.handleKeyShare(s, m)
 		case "who":
 			h.mu.Lock()
 			if ch := h.chanFor(s, m.Ch); ch != nil {
@@ -505,7 +509,7 @@ func (h *hub) authenticate(conn net.Conn, ip string, hello Msg) (*session, strin
 		se.LastSeen, se.IP, u.LastSeen = now, ip, now
 		h.markDirty()
 		s.user, s.sessHash = u, sh
-		return h.finishAuth(s, "")
+		return h.finishAuth(s, hello, "")
 
 	case a != nil && a.User != "" && (a.Invite != "" || a.Register):
 		name := strings.ToLower(strings.TrimSpace(a.User))
@@ -563,7 +567,7 @@ func (h *hub) authenticate(conn net.Conn, ip string, hello Msg) (*session, strin
 		}
 		s.user = u
 		raw := h.newSession(u, s.device, ip)
-		return h.finishAuth(s, raw)
+		return h.finishAuth(s, hello, raw)
 
 	case a != nil && a.User != "":
 		name := strings.ToLower(strings.TrimSpace(a.User))
@@ -596,7 +600,7 @@ func (h *hub) authenticate(conn net.Conn, ip string, hello Msg) (*session, strin
 		}
 		s.user = u
 		raw := h.newSession(u, s.device, ip)
-		return h.finishAuth(s, raw)
+		return h.finishAuth(s, hello, raw)
 
 	case hello.Token != "":
 		h.mu.Lock()
@@ -617,15 +621,24 @@ func (h *hub) authenticate(conn net.Conn, ip string, hello Msg) (*session, strin
 		}
 		s.user = &User{ID: guestID(nick), Name: nick, Role: "guest", Status: "active"}
 		s.guest = true
-		return h.finishAuth(s, "")
+		return h.finishAuth(s, hello, "")
 	}
 	return fail(codeAuth, "no credentials — use -user NAME (account) or -token X (guest)")
 }
 
-// finishAuth applies per-user connection limits. Caller holds h.mu.
-func (h *hub) finishAuth(s *session, raw string) (*session, string, *Msg) {
+// finishAuth applies per-user connection limits and registers this device's E2E
+// public key (if it sent one), so other devices can find it to share a channel key.
+// Caller holds h.mu.
+func (h *hub) finishAuth(s *session, hello Msg, raw string) (*session, string, *Msg) {
 	if max := h.lim().ConnsPerUser; max > 0 && h.sessionCount(s.user.ID) >= max {
 		return nil, "", &Msg{T: "err", Code: codeLimit, Text: fmt.Sprintf("too many simultaneous connections (max %d) — /sessions on another device", max)}
+	}
+	if hello.Pub != "" {
+		id := deviceKeyID(s.user.ID, s.device)
+		if dk := h.st.DeviceKeys[id]; dk == nil || dk.Pub != hello.Pub {
+			h.st.DeviceKeys[id] = &DeviceKey{Pub: hello.Pub, Updated: nowMs()}
+			h.markDirty()
+		}
 	}
 	return s, raw, nil
 }
@@ -714,7 +727,7 @@ func (h *hub) consumeInvite(inv *Invite) {
 
 func (h *hub) chanInfoFor(u *User, ch *Channel) ChanInfo {
 	ci := ChanInfo{Name: ch.Name, Topic: ch.Topic, Readonly: ch.Readonly, Members: len(ch.Members),
-		Default: ch.Default, Last: h.lastID(ch.ID), Expire: ch.ExpireSec}
+		Default: ch.Default, Last: h.lastID(ch.ID), Expire: ch.ExpireSec, E2E: ch.E2E, Epoch: ch.KeyEpoch}
 	if m := ch.Members[u.ID]; m != nil {
 		ci.Role = m.Role
 		ci.Unread = h.unreadCount(ch.ID, m.LastRead)
@@ -875,7 +888,54 @@ func (h *hub) handleMsg(s *session, m Msg) {
 		h.noteRateHit(s.user, ch)
 		return
 	}
-	h.post(ch, Msg{T: "msg", From: s.user.Name, Text: m.Text})
+	h.post(ch, Msg{T: "msg", From: s.user.Name, Text: m.Text, Epoch: m.Epoch})
+}
+
+// handleKeyReq relays "I don't have this channel's key" to every other device currently
+// subscribed to the channel, so any one of them holding it can wrap and send it back via
+// a keyshare frame. The hub never sees a channel key itself, only requests and wrapped blobs.
+func (h *hub) handleKeyReq(s *session, m Msg) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ch := h.chanFor(s, m.Ch)
+	if ch == nil || !ch.E2E {
+		return
+	}
+	L := h.lim()
+	if !h.msgLim.allowRate(fmt.Sprintf("keyreq/%d", s.user.ID), L.MsgRate, L.MsgBurst, 1) {
+		return
+	}
+	pub := ""
+	if dk := h.st.DeviceKeys[deviceKeyID(s.user.ID, s.device)]; dk != nil {
+		pub = dk.Pub
+	}
+	req := Msg{T: "keyreq", Ch: ch.Name, Epoch: m.Epoch, FromUser: s.user.Name, FromDev: s.device, FromPub: pub}
+	for other := range h.sessions {
+		if other != s && other.subs[ch.ID] {
+			other.push(req)
+		}
+	}
+}
+
+// handleKeyShare relays a wrapped channel key from one device to one specific other
+// device of a member — never stored, never broadcast wider than that one target.
+func (h *hub) handleKeyShare(s *session, m Msg) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ch := h.chanFor(s, m.Ch)
+	if ch == nil || !ch.E2E {
+		return
+	}
+	target := h.userByName(m.ToUser)
+	if target == nil || h.rankIn(target, ch) == rankNone {
+		return // don't hand key material to someone who isn't (or is no longer) a member
+	}
+	out := Msg{T: "keyshare", Ch: ch.Name, Epoch: m.Epoch, ToUser: m.ToUser, ToDevice: m.ToDevice, FromPub: m.FromPub, Wrapped: m.Wrapped}
+	for other := range h.sessions {
+		if other.user.ID == target.ID && other.device == m.ToDevice {
+			other.push(out)
+		}
+	}
 }
 
 // handleClip relays a clipboard payload to the user's *other* devices. Never stored,

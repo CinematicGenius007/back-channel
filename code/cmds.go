@@ -145,7 +145,10 @@ func (h *hub) handleCmd(s *session, m Msg) Msg {
 		ch.Topic = arg("topic")
 		ch.Readonly = arg("readonly") == "on"
 		ch.ExpireSec, _ = parseExpire(arg("expire"))
-		h.audit(s.user, "create", "", ch, "expire="+fmtExpire(ch.ExpireSec))
+		if arg("e2e") == "on" {
+			ch.E2E, ch.KeyEpoch = true, 1
+		}
+		h.audit(s.user, "create", "", ch, fmt.Sprintf("expire=%s e2e=%v", fmtExpire(ch.ExpireSec), ch.E2E))
 		h.save()
 		return Msg{T: "res", RID: m.RID, OK: true, Text: "created #" + cn + " — you are its owner. /invite to bring people in.",
 			Channels: []ChanInfo{h.chanInfoFor(s.user, ch)}}
@@ -586,7 +589,8 @@ func (h *hub) handleCmd(s *session, m Msg) Msg {
 			return Msg{T: "res", RID: m.RID, OK: true, Lines: []string{
 				fmt.Sprintf("#%s settings — expire=%s  max_file_mb=%d  msg_rate=%g  readonly=%v   (0 = server default)",
 					ch.Name, fmtExpire(ch.ExpireSec), ch.MaxFileMB, ch.MsgRate, ch.Readonly),
-				"  expire: messages (and their files) self-destruct after this age — 10m, 2h, 7d, 1w, off"}}
+				"  expire: messages (and their files) self-destruct after this age — 10m, 2h, 7d, 1w, off",
+				fmt.Sprintf("  e2e=%v (set at /create time only — see /e2e)", ch.E2E)}}
 		}
 		for k, v := range args {
 			switch k {
@@ -616,6 +620,41 @@ func (h *hub) handleCmd(s *session, m Msg) Msg {
 		h.toChan(ch.ID, Msg{T: "settings", Ch: ch.Name, By: s.user.Name,
 			Channels: []ChanInfo{{Name: ch.Name, Topic: ch.Topic, Readonly: ch.Readonly, Expire: ch.ExpireSec}}})
 		return ok("#" + ch.Name + " settings updated (expire=" + fmtExpire(ch.ExpireSec) + ")")
+
+	case "e2epeers":
+		ch, _, e := chCtx(actMembers)
+		if e != nil {
+			return *e
+		}
+		if !ch.E2E {
+			return fail(codeBadArg, "#"+ch.Name+" is not end-to-end encrypted")
+		}
+		var peers []Peer
+		for other := range h.sessions {
+			if h.rankIn(other.user, ch) == rankNone {
+				continue
+			}
+			dk := h.st.DeviceKeys[deviceKeyID(other.user.ID, other.device)]
+			if dk == nil {
+				continue
+			}
+			peers = append(peers, Peer{User: other.user.Name, Device: other.device, Pub: dk.Pub})
+		}
+		return Msg{T: "res", RID: m.RID, OK: true, Peers: peers}
+
+	case "e2erotate":
+		ch, _, e := chCtx(actE2ERotate)
+		if e != nil {
+			return *e
+		}
+		if !ch.E2E {
+			return fail(codeBadArg, "#"+ch.Name+" is not end-to-end encrypted")
+		}
+		ch.KeyEpoch++
+		h.audit(s.user, "e2erotate", "", ch, fmt.Sprintf("epoch %d", ch.KeyEpoch))
+		h.save()
+		return Msg{T: "res", RID: m.RID, OK: true, Text: fmt.Sprintf("#%s rotated to epoch %d — share the new key with peers", ch.Name, ch.KeyEpoch),
+			Channels: []ChanInfo{{Name: ch.Name, E2E: true, Epoch: ch.KeyEpoch}}}
 
 	// ---- account -----------------------------------------------------------------
 

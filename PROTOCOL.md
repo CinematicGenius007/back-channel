@@ -22,11 +22,16 @@ Open TCP to `HOST:7777` (TLS if the hub says so) and send exactly one `hello` li
 → {"t":"hello","v":2,"name":"oldpc","token":"<legacy token>"}                      // guest (if guest_access is on)
 → {"t":"hello","name":"oldpc","token":"<legacy token>","since":0}                  // v1 client (no "v")
 ```
+Any `hello` may also carry `"pub":"<base64 X25519 public key>"` — this device's identity
+for end-to-end encrypted channels (§3a). It is optional and has nothing to do with
+authentication; the hub just remembers it against (account, device) so other devices can
+find it later.
 Replies:
 ```jsonc
 ← {"t":"ok","v":2,"user":"alice","role":"user","session":"<only after password/invite login>",
    "channels":[{"name":"general","role":"member","unread":12,"last":1301,"topic":"…","members":9},
-               {"name":"design","role":"mod","expire":3600,"readonly":false}],
+               {"name":"design","role":"mod","expire":3600,"readonly":false},
+               {"name":"incident-room","role":"mod","e2e":true,"epoch":3}],
    "limits":{"max_msg":65536,"max_file":2147483648,"quota_left":5368709120},"text":"backchannel hub 2.0.0"}
 ← {"t":"err","code":"auth","text":"bad username or password"}
 ← {"t":"err","code":"banned","text":"you are banned from this hub: spam"}
@@ -78,6 +83,40 @@ Marking read (syncs unread counts across your devices):
 ← {"t":"read","ch":"design","id":1302}        // to your *other* sessions
 ```
 
+In an end-to-end channel (`e2e:true` on its `ChanInfo`), `text` is ciphertext the hub
+cannot read, and the frame carries an extra field:
+```jsonc
+→ {"t":"msg","ch":"incident-room","text":"<base64 nonce+ciphertext>","epoch":3}
+← {"t":"msg","ch":"incident-room","id":1500,"ts":…,"from":"alice","text":"<same ciphertext>","epoch":3}
+```
+`epoch` says which of the channel's keys this was sealed with — the hub only stores and
+forwards it, never interprets it. See §3a for how a client gets that key in the first
+place, and `ENCRYPTION.md` for the full design.
+
+## 3a. End-to-end encryption: keyreq / keyshare
+
+Two frame types, both relayed live and never persisted or replayed — a device that
+doesn't hold a channel's key asks for it, and a device that does holds the only copy
+that matters (the hub never sees the key, wrapped or otherwise, at rest):
+```jsonc
+→ {"t":"keyreq","ch":"incident-room","epoch":3}
+```
+The hub broadcasts this to every *other* session currently subscribed to that channel,
+filling in who's asking:
+```jsonc
+← {"t":"keyreq","ch":"incident-room","epoch":3,"from_user":"bob","from_dev":"bobpc","from_pub":"<base64>"}
+```
+Any device that holds epoch 3's key wraps it to `from_pub` (ECDH + AES-256-GCM, see
+`ENCRYPTION.md` §4) and answers directly:
+```jsonc
+→ {"t":"keyshare","ch":"incident-room","epoch":3,"to_user":"bob","to_device":"bobpc",
+   "from_pub":"<answering device's own pub>","wrapped":"<base64 nonce+ciphertext>"}
+```
+The hub relays this **only** to sessions of `to_user`/`to_device`, and only if both the
+asker and the answerer are currently members of the channel — otherwise it is dropped
+silently, the same "never forward, never explain why" rule as everywhere else in this
+protocol.
+
 ## 4. Clipboard sync
 
 ```jsonc
@@ -95,6 +134,9 @@ Guests: `X-Token: <legacy token>` (or `?token=…`) plus `&from=NICK`.
 curl -T spec.pdf -H "Authorization: Bearer $S" -H "Expect: 100-continue" \
      "http://hub:7778/up?ch=design&name=spec.pdf&device=mac"
 # → {"fid":"a3b1acb38b0c3398","size":1234,"name":"spec.pdf","sha256":"…"}
+#
+# into an end-to-end channel: name and body are ciphertext the client sealed itself, and
+# &epoch=N says which key. The hub does not know or care; it is one more query parameter.
 
 # download (you must be a member of a channel containing a message that references the file)
 curl -H "Authorization: Bearer $S" http://hub:7778/f/a3b1acb38b0c3398 -o spec.pdf
@@ -130,14 +172,15 @@ Every moderation/administration action is one frame type:
 ← {"t":"res","rid":"c9","ok":true,"text":"troll banned from #design"}
 ← {"t":"res","rid":"c9","code":"perm","text":"you need mod in #design"}
 ← {"t":"res","rid":"c9","ok":true,"lines":["…","…"]}          // tabular output
-← {"t":"res","rid":"c9","ok":true,"channels":[{…}]}            // channels / create / join
+← {"t":"res","rid":"c9","ok":true,"channels":[{…}]}            // channels / create / join / e2erotate
+← {"t":"res","rid":"c9","ok":true,"peers":[{"user":"bob","device":"bobpc","pub":"<base64>"}]}  // e2epeers
 ```
 `args` values are always strings. `ch` scopes channel commands. Guests may only run `channels`.
 
 | name | scope | args | minimum role |
 |---|---|---|---|
 | `channels` | server | – | any |
-| `create` | server | `name`, `topic`?, `readonly`=on?, `expire`? | server admin, or user if `allow_user_channels` |
+| `create` | server | `name`, `topic`?, `readonly`=on?, `expire`?, `e2e`=on? | server admin, or user if `allow_user_channels` |
 | `delete` | channel | `confirm`=channel name | ch owner |
 | `topic` | channel | `text` | mod |
 | `invite` | channel | `uses` (n / inf), `hours` (0 = never), `role`, `signup`=off? | mod |
@@ -154,6 +197,8 @@ Every moderation/administration action is one frame type:
 | `del` | channel | `id` | own message; mod for others |
 | `purge` | channel | `user` \| `last` \| `before` | ch owner |
 | `settings` | channel | `expire`, `readonly`, `max_file_mb`, `msg_rate` (none → show) | ch admin |
+| `e2erotate` | channel | – (e2e channels only; bumps the epoch) | ch admin |
+| `e2epeers` | channel | – (e2e channels only; returns `peers`: online members' devices + public keys) | readonly |
 | `passwd` | self | `old`, `new` | – |
 | `sessions` | self | `revoke`=id prefix? | – |
 | `logout` | self | `all`=on? | – |
@@ -186,6 +231,7 @@ Every moderation/administration action is one frame type:
 | `quota` | `text` | you crossed 80 % / 100 % of storage |
 | `err` with `code:"auth"`/`"banned"` (no `rid`) | | session revoked / banned mid-connection; the hub closes the socket |
 | `pong` | | reply to `{"t":"ping"}` |
+| `keyreq`, `keyshare` | see §3a | end-to-end key exchange; relayed live, never persisted |
 
 ## 8. Error codes
 

@@ -68,8 +68,17 @@ type Channel struct {
 	MsgRate       float64               `json:"msg_rate,omitempty"`       // 0 = server default
 	Readonly      bool                  `json:"readonly,omitempty"`       // only mod+ may post (announcements)
 	Default       bool                  `json:"default,omitempty"`        // guests / new users land here
+	E2E           bool                  `json:"e2e,omitempty"`            // end-to-end encrypted: hub only ever sees ciphertext
+	KeyEpoch      int                   `json:"key_epoch,omitempty"`      // e2e: bumped by /e2e rotate; the hub never sees the key itself
 	Members       map[int64]*Membership `json:"members"`
 	Bans          map[int64]*Ban        `json:"bans,omitempty"`
+}
+
+// DeviceKey is one device's public X25519 identity, so other devices can wrap a
+// channel key to it. Public keys are not secret; storing and relaying them is safe.
+type DeviceKey struct {
+	Pub     string `json:"pub"`
+	Updated int64  `json:"updated"`
 }
 
 type Invite struct {
@@ -123,16 +132,20 @@ type Settings struct {
 }
 
 type State struct {
-	Version  int                  `json:"version"`
-	NextUser int64                `json:"next_user"`
-	NextChan int64                `json:"next_chan"`
-	Users    map[int64]*User      `json:"users"`
-	Channels map[int64]*Channel   `json:"channels"`
-	Sessions map[string]*Session  `json:"sessions"` // key: sha256(token) hex
-	Invites  map[string]*Invite   `json:"invites"`
-	Files    map[string]*FileMeta `json:"files"`
-	Settings Settings             `json:"settings"`
+	Version    int                   `json:"version"`
+	NextUser   int64                 `json:"next_user"`
+	NextChan   int64                 `json:"next_chan"`
+	Users      map[int64]*User       `json:"users"`
+	Channels   map[int64]*Channel    `json:"channels"`
+	Sessions   map[string]*Session   `json:"sessions"` // key: sha256(token) hex
+	Invites    map[string]*Invite    `json:"invites"`
+	Files      map[string]*FileMeta  `json:"files"`
+	DeviceKeys map[string]*DeviceKey `json:"device_keys,omitempty"` // key: "<user id>:<device>"
+	Settings   Settings              `json:"settings"`
 }
+
+// deviceKeyID is the DeviceKeys map key for one (account, device) pair.
+func deviceKeyID(uid int64, device string) string { return fmt.Sprintf("%d:%s", uid, device) }
 
 func defaultLimits() Limits {
 	return Limits{
@@ -148,7 +161,7 @@ func newState() *State {
 	return &State{
 		Version: 2, NextUser: 1, NextChan: 1,
 		Users: map[int64]*User{}, Channels: map[int64]*Channel{}, Sessions: map[string]*Session{},
-		Invites: map[string]*Invite{}, Files: map[string]*FileMeta{},
+		Invites: map[string]*Invite{}, Files: map[string]*FileMeta{}, DeviceKeys: map[string]*DeviceKey{},
 		Settings: Settings{Registration: "invite", DefaultChannel: "general", MaxUsers: 500, MaxChannels: 200, Limits: defaultLimits()},
 	}
 }
