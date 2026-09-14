@@ -1,0 +1,738 @@
+---
+const repo = 'https://github.com/cinematicgenius007/backchannel';
+const blob = (file: string) => `${repo}/blob/main/${file}`;
+
+const lineNumbers = Array.from({ length: 16 }, (_, i) => String(i + 1).padStart(2, '0'));
+
+const facts = ['BUILT FOR SMALL TRUSTED GROUPS', 'NO CLOUD', 'NO DATABASE', 'STD LIBRARY ONLY', 'GO 1.24+'];
+
+const modules = [
+  ['CHANNELS', 'Many unlisted channels on one port. Accounts, roles, invites, moderation, and history that replays from the last message a client saw.'],
+  ['FILES + CLIPBOARD', 'Drag a file into the terminal and it lands in each device’s inbox. Clipboard sync between your own devices is opt-in and never stored.'],
+  ['ENCRYPTED ROOMS', 'Optional per channel, chosen when the channel is created. Keys are generated and wrapped on client devices, never sent to the hub.'],
+  ['ONE BINARY', 'About 6 MB, Go standard library only. macOS, Windows, and Linux on arm64 and amd64.'],
+];
+
+const steps = [
+  ['run the hub', '$ bch serve'],
+  ['connect devices', '$ bch -hub 192.168.1.20 -user you'],
+  ['send text, files, clipboard', 'type · drag a file · /paste · /clip on'],
+  ['read and change the source', '$ cd code && go test ./...'],
+];
+
+const boundary = [
+  ['ordinary channel', 'YES', 'Transport TLS (bch serve -public) protects the connection in transit. It is not end-to-end encryption: the hub stores and can read content.'],
+  ['e2e channel', 'NO', 'Created with /create NAME e2e=on. AES-256-GCM on the client; the channel key is wrapped per device with X25519. The hub relays ciphertext.'],
+  ['metadata, both', 'VISIBLE', 'Membership, presence, message and file sizes, and timing are not hidden.'],
+];
+
+// Static render of the transmission scene. It is the no-WebGL fallback and uses the
+// same geometry as the shader below, frozen at one moment.
+const RAMP = ' .,:-~=+iI?7S$#';
+const fract = (n: number) => n - Math.floor(n);
+const hash = (x: number, y: number) => fract(Math.sin(x * 127.1 + y * 311.7) * 43758.5453);
+const noise = (x: number, y: number) => {
+  const ix = Math.floor(x), iy = Math.floor(y);
+  let fx = x - ix, fy = y - iy;
+  fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+  const a = hash(ix, iy), b = hash(ix + 1, iy), c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
+  return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+};
+const fbm = (x: number, y: number) => {
+  let v = 0, amp = 0.5;
+  for (let i = 0; i < 4; i++) { v += amp * noise(x, y); x = x * 2.03 + 1.7; y = y * 2.03 + 9.2; amp *= 0.5; }
+  return v;
+};
+const smooth = (a: number, b: number, x: number) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const sdBox = (px: number, py: number, hx: number, hy: number) => {
+  const qx = Math.abs(px) - hx, qy = Math.abs(py) - hy;
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0);
+};
+const transmissionArt = (cols: number, rows: number, time: number) => {
+  const cw = 7, ch = 13, W = cols * cw, H = rows * ch;
+  const hsx = 0.12 * W, hsy = 0.22 * H, c1x = 0.19 * W, c2x = 0.81 * W, cy = 0.54 * H;
+  const hcx = 0.5 * W, r = Math.min(H * 0.13, W * 0.08);
+  const lines: string[] = [];
+  for (let row = rows - 1; row >= 0; row--) {
+    let line = '';
+    for (let col = 0; col < cols; col++) {
+      const X = (col + 0.5) * cw, Y = (row + 0.5) * ch;
+      let L = smooth(0.5, 0.92, fbm((X / W) * (W / H) * 2.5, (Y / H) * 2.5)) * 0.24;
+      const d1 = sdBox(X - c1x, Y - cy, hsx, hsy), d2 = sdBox(X - c2x, Y - cy, hsx, hsy);
+      if ((d1 < -cw * 2 || d2 < -cw * 2) && row % 2 === 0) {
+        const left = X < W / 2;
+        const xl = (X - ((left ? c1x : c2x) - hsx)) / (hsx * 2);
+        if (xl < hash(row, left ? 0 : 7) * 0.8 + 0.1 && hash(col, row) > 0.25) L = Math.max(L, 0.55);
+      }
+      for (const cx of [c1x, c2x]) if (sdBox(X - cx, Y - (cy - hsy - ch * 2.5), hsx * 0.35, ch * 0.6) < 0) L = Math.max(L, 0.8);
+      L = Math.max(L, (1 - smooth(cw * 0.6, cw * 1.6, Math.min(Math.abs(d1), Math.abs(d2)))) * 0.95);
+      const dh = Math.hypot(X - hcx, Y - cy);
+      L = Math.max(L, (1 - smooth(0, cw * 1.3, Math.abs(dh - r))) * 0.9, (1 - smooth(0, r * 0.55, dh)) * 0.7);
+      const wave = cy + Math.sin(X * 0.012 - time * 1.4) * ch * 1.2;
+      const onLine = X > c1x + hsx && X < c2x - hsx && Math.abs(X - hcx) > r + cw;
+      if (onLine && fract(X / (cw * 2)) > 0.5) L = Math.max(L, (1 - smooth(ch * 0.3, ch * 1.1, Math.abs(Y - wave))) * 0.5);
+      line += RAMP[Math.floor(Math.min(0.999, Math.max(0, L)) * RAMP.length)];
+    }
+    lines.push(line.replace(/\s+$/, ''));
+  }
+  return lines.join('\n');
+};
+const transmission = transmissionArt(200, 46, 0);
+
+const docs = [
+  ['README.md', 'install, connect two machines', blob('README.md')],
+  ['WINDOWS-SETUP.md', 'step-by-step Windows client', blob('WINDOWS-SETUP.md')],
+  ['PUBLIC-SERVER.md', 'TLS, pinning, VPS, firewall', blob('PUBLIC-SERVER.md')],
+  ['ENCRYPTION.md', 'what e2e protects, and what not', blob('ENCRYPTION.md')],
+  ['CONTRIBUTING.md', 'checks, tests, pull requests', blob('CONTRIBUTING.md')],
+];
+---
+
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="description" content="backchannel is an open-source, self-hosted, IRC-inspired relay for text, files, and clipboard sync between your machines and a small trusted group." />
+    <title>backchannel — open source relay</title>
+    <script is:inline>
+      (() => {
+        let theme = null;
+        try { theme = localStorage.getItem('backchannel-theme'); } catch {}
+        if (theme !== 'dark' && theme !== 'light') {
+          theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&display=swap" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="masthead">
+      <div class="bar">
+        <a class="brand" href="#top" aria-label="backchannel, top of page"><strong>BACKCHANNEL</strong><span>OPEN SOURCE RELAY</span></a>
+        <nav aria-label="Primary">
+          <a href="#how">HOW IT WORKS</a>
+          <a href="#docs">DOCS</a>
+          <a href={repo}>GITHUB ↗</a>
+        </nav>
+        <button id="theme-toggle" class="toggle" type="button" aria-pressed="false">
+          <span aria-hidden="true">[</span><span class="toggle-glyph" aria-hidden="true">◐</span><span class="toggle-label">DARK</span><span aria-hidden="true">]</span>
+        </button>
+      </div>
+      <div class="status" aria-label="Hub defaults">
+        <span>&gt; RUN SYSTEM: bch serve</span>
+        <span>&gt; CHAT :7777 / FILES :7778</span>
+        <span>&gt; SIGNAL: <mark>READY</mark></span>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="row hero" id="top" aria-labelledby="hero-title">
+        <canvas class="ascii ascii-hero" data-scene="0" data-cell="8,14" data-ink="--ascii-soft" data-mask="0.5,0.92" aria-hidden="true"></canvas>
+        <pre class="rail rail-lines" aria-hidden="true">{lineNumbers.join('\n')}</pre>
+        <div class="body hero-body">
+          <div class="hero-copy">
+            <p class="label">[01] OUTPUT_LOG : SELF-HOSTED RELAY</p>
+            <h1 id="hero-title">Your machines.<br />One channel.</h1>
+            <p class="lede">backchannel is a small, self-hosted, IRC-inspired relay for text, files, and clipboard sync between your own machines and a few people you trust. One static binary. No cloud account.</p>
+            <div class="actions">
+              <a class="btn btn-signal" href={`${repo}#setup-5-minutes`}>&gt; GET STARTED</a>
+              <a class="btn btn-line" href={blob('README.md')}>READ THE DOCS ↗</a>
+              <code class="hint">$ go build -o bch .</code>
+            </div>
+          </div>
+
+          <figure class="session" aria-label="Example terminal session">
+            <figcaption><span>── SESSION / #design</span><span class="live"><i></i>LIVE</span></figcaption>
+            <pre class="log">10:42  ayush   #12 meeting is 3pm
+10:43  ayush   #13 spec.pdf (1.2 MB)
+       — saved inbox/design/spec.pdf
+10:44  mina    pushed the build
+       — clipboard synced (42 B)</pre>
+            <pre class="tabs">1:#general  2:#design(1)  3:#ops
+connected · ayush@hub · #design (owner)</pre>
+            <pre class="prompt">&gt; <span class="cursor">_</span></pre>
+          </figure>
+        </div>
+      </section>
+
+      <div class="row facts">
+        <span class="rail" aria-hidden="true"></span>
+        <ul class="body" aria-label="Project facts">
+          {facts.map((fact, i) => <li class={i === facts.length - 1 ? 'signal-text' : undefined}>{fact}</li>)}
+        </ul>
+      </div>
+
+      <figure class="transmission" aria-label="Illustration: two machines exchanging frames through one hub">
+        <pre class="ascii-fallback" aria-hidden="true">{transmission}</pre>
+        <canvas class="ascii" data-scene="1" data-cell="7,13" data-ink="--ascii-ink" aria-hidden="true"></canvas>
+        <div class="tx-labels" aria-hidden="true">
+          <span class="tx-corner tx-tl">── FIG.1 / TRANSMISSION ─────────</span>
+          <span class="tx-corner tx-tr">ONE HUB · MANY DEVICES · ONE CHANNEL</span>
+          <span class="tx-node tx-left">MAC <b>bch -user ayush</b></span>
+          <span class="tx-node tx-right">WINDOWS PC <b>bch -name work</b></span>
+          <span class="tx-node tx-hub">HUB <b>:7777 / :7778</b></span>
+          <span class="tx-corner tx-bl"><i></i> one JSON frame: text, a file, or clipboard</span>
+          <span class="tx-corner tx-br">history replays from the last id a client saw</span>
+        </div>
+        <figcaption class="sr-only">Two terminals on either side of a hub. Frames travel both ways along a single channel.</figcaption>
+      </figure>
+
+      <section class="row section" aria-labelledby="does-title">
+        <span class="rail rail-mark" aria-hidden="true">§02</span>
+        <div class="body">
+          <div class="section-head">
+            <h2 id="does-title">What it does</h2>
+            <p class="label">[02] MODULES</p>
+          </div>
+          <dl class="table modules">
+            {modules.map(([name, text], i) => (
+              <div class="tr">
+                <span class="num" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
+                <dt>{name}</dt>
+                <dd>{text}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </section>
+
+      <section class="row section" id="how" aria-labelledby="how-title">
+        <span class="rail rail-mark" aria-hidden="true">§03</span>
+        <div class="body split">
+          <div class="split-intro">
+            <p class="label">[03] RUNNING MODULES</p>
+            <h2 id="how-title">How it works</h2>
+            <p>One hub process, persistent clients, newline-delimited JSON over TCP. Files move over a small HTTP endpoint beside it.</p>
+          </div>
+          <ol class="table steps">
+            <li class="th" aria-hidden="true"><span>STEP</span><span>MODULE</span><span>COMMAND</span></li>
+            {steps.map(([what, command], i) => (
+              <li class="tr">
+                <span class="num signal-text">{String(i + 1).padStart(2, '0')}</span>
+                <span>{what}</span>
+                <code>{command}</code>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section class="row section" aria-labelledby="boundary-title">
+        <span class="rail rail-mark" aria-hidden="true">§04</span>
+        <div class="body">
+          <div class="section-head">
+            <h2 id="boundary-title">Security boundary</h2>
+            <p class="label">[04] WHO CAN READ WHAT</p>
+          </div>
+          <div class="table boundary" role="table" aria-label="Who can read channel content">
+            <div class="th" role="row"><span role="columnheader">CHANNEL</span><span role="columnheader">HUB OPERATOR READS CONTENT</span><span role="columnheader">WHAT PROTECTS IT</span></div>
+            {boundary.map(([kind, reads, how]) => (
+              <div class="tr" role="row">
+                <strong role="rowheader">{kind}</strong>
+                <span role="cell"><span class={reads === 'NO' ? 'tag' : undefined}>{reads}</span></span>
+                <span role="cell">{how}</span>
+              </div>
+            ))}
+          </div>
+          <p class="footnote">Server admins outrank channel membership and can join an e2e channel like any member. Choose admins accordingly. Details in <a href={`${blob('ENCRYPTION.md')}#7-what-this-does-not-protect-against`}>ENCRYPTION.md §7 ↗</a></p>
+        </div>
+      </section>
+
+      <section class="row section section-last" id="docs" aria-labelledby="docs-title">
+        <span class="rail rail-mark" aria-hidden="true">§05</span>
+        <div class="body split">
+          <div class="split-intro">
+            <p class="label">[05] START / CONTRIBUTE</p>
+            <h2 id="docs-title">Run it.<br />Read it.<br />Change it.</h2>
+            <p>The code and docs live on GitHub under cinematicgenius007. Issues, documentation fixes, and pull requests are welcome.</p>
+            <a class="btn btn-signal" href={repo}>&gt; OPEN ON GITHUB ↗</a>
+          </div>
+          <ul class="table docs">
+            {docs.map(([file, what, href]) => (
+              <li><a class="tr" href={href}><strong>{file}</strong><span>{what}</span><span aria-hidden="true">↗</span></a></li>
+            ))}
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <div class="horizon" aria-hidden="true">
+      <canvas class="ascii" data-scene="0" data-cell="8,14" data-ink="--ascii-soft" data-mask="-1,0" data-vfade="1"></canvas>
+    </div>
+    <footer class="footer">
+      <span>SYSTEM STATE: STANDBY</span>
+      <span>BACKCHANNEL / BCH</span>
+      <span>© CINEMATICGENIUS007</span>
+    </footer>
+
+    <script is:inline>
+      (() => {
+        const root = document.documentElement;
+        const button = document.getElementById('theme-toggle');
+        const label = button.querySelector('.toggle-label');
+        const glyph = button.querySelector('.toggle-glyph');
+        const meta = document.querySelector('meta[name="theme-color"]');
+        const listeners = [];
+
+        const apply = (theme) => {
+          const dark = theme === 'dark';
+          root.dataset.theme = dark ? 'dark' : 'light';
+          label.textContent = dark ? 'LIGHT' : 'DARK';
+          glyph.textContent = dark ? '◑' : '◐';
+          button.setAttribute('aria-pressed', String(dark));
+          button.setAttribute('aria-label', dark ? 'Dark mode on. Switch to light mode' : 'Light mode on. Switch to dark mode');
+          meta.setAttribute('content', dark ? '#0b0b0b' : '#ffffff');
+          listeners.forEach((fn) => fn());
+        };
+
+        apply(root.dataset.theme);
+        button.addEventListener('click', () => {
+          const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+          try { localStorage.setItem('backchannel-theme', next); } catch {}
+          apply(next);
+        });
+        matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (event) => {
+          let stored = null;
+          try { stored = localStorage.getItem('backchannel-theme'); } catch {}
+          if (!stored) apply(event.matches ? 'dark' : 'light');
+        });
+
+        // ASCII fields: a fragment shader picks a glyph per character cell from a small
+        // atlas. Without WebGL the canvases stay hidden and static ASCII (if any) remains.
+        const RAMP = ' .,:-~=+iI?7S$#';
+        const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+        const css = (name) => getComputedStyle(root).getPropertyValue(name).trim();
+        const rgb = (hex) => {
+          const h = hex.replace('#', '');
+          return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+        };
+
+        const FS = `#ifdef GL_FRAGMENT_PRECISION_HIGH
+          precision highp float;
+          #else
+          precision mediump float;
+          #endif
+          uniform vec2 res; uniform vec2 cell; uniform float time; uniform sampler2D atlas;
+          uniform float glyphs; uniform vec3 ink; uniform vec3 signal; uniform float alpha;
+          uniform float scene; uniform vec2 mask; uniform float vfade;
+          float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+          float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+            float a=hash(i),b=hash(i+vec2(1.,0.)),c=hash(i+vec2(0.,1.)),d=hash(i+vec2(1.,1.));
+            return a+(b-a)*f.x+(c-a)*f.y+(a-b-c+d)*f.x*f.y;}
+          float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=a*noise(p);p=p*2.03+vec2(1.7,9.2);a*=.5;}return v;}
+          float sdBox(vec2 p,vec2 b){vec2 q=abs(p)-b;return length(max(q,0.))+min(max(q.x,q.y),0.);}
+
+          vec2 clouds(vec2 P){
+            vec2 uv=P/res;
+            vec2 q=vec2(uv.x*res.x/res.y,uv.y)*1.8;
+            float v=smoothstep(.42,.84,fbm(q+vec2(time*.03,-time*.012))+(uv.y-.5)*.1);
+            float L=v*.8*smoothstep(mask.x,mask.y,uv.x);
+            L*=mix(1.,smoothstep(1.,.15,uv.y),vfade);
+            float spark=step(.996,hash(floor(P/cell)+floor(time*1.5)))*step(.3,L);
+            return vec2(max(L,spark),spark);
+          }
+
+          vec2 transmission(vec2 P){
+            vec2 uv=P/res;
+            float L=smoothstep(.5,.92,fbm(vec2(uv.x*res.x/res.y,uv.y)*2.5+vec2(time*.05,time*.02)))*.24;
+            vec2 hs=vec2(.12*res.x,.22*res.y);
+            vec2 c1=vec2(.19*res.x,.54*res.y), c2=vec2(.81*res.x,.54*res.y);
+            float d1=sdBox(P-c1,hs), d2=sdBox(P-c2,hs);
+            bool left=P.x<res.x*.5;
+            float row=floor(P.y/cell.y);
+            float xl=(P.x-((left?c1.x:c2.x)-hs.x))/(hs.x*2.);
+            float len=hash(vec2(row,(left?0.:7.)+floor(time*.6+(left?0.:.5))))*.8+.1;
+            float text=step(mod(row,2.),.5)*step(xl,len)*step(.25,hash(vec2(floor(P.x/cell.x),row)));
+            float inside=max(step(d1,-cell.x*2.),step(d2,-cell.x*2.));
+            L=max(L,inside*text*.55);
+            float s1=sdBox(P-vec2(c1.x,c1.y-hs.y-cell.y*2.5),vec2(hs.x*.35,cell.y*.6));
+            float s2=sdBox(P-vec2(c2.x,c2.y-hs.y-cell.y*2.5),vec2(hs.x*.35,cell.y*.6));
+            L=max(L,max(step(s1,0.),step(s2,0.))*.8);
+            L=max(L,(1.-smoothstep(cell.x*.6,cell.x*1.6,min(abs(d1),abs(d2))))*.95);
+            vec2 hc=vec2(.5*res.x,c1.y);
+            float r=min(res.y*.13,res.x*.08)*(1.+.04*sin(time*2.));
+            float dh=length(P-hc);
+            L=max(L,max((1.-smoothstep(0.,cell.x*1.3,abs(dh-r)))*.9,(1.-smoothstep(0.,r*.55,dh))*.7));
+            float ax=c1.x+hs.x, bx=c2.x-hs.x;
+            float wave=hc.y+sin(P.x*.012-time*1.4)*cell.y*1.2;
+            float onLine=step(ax,P.x)*step(P.x,bx)*step(r+cell.x,abs(P.x-hc.x));
+            L=max(L,(1.-smoothstep(cell.y*.3,cell.y*1.1,abs(P.y-wave)))*onLine*step(.5,fract(P.x/(cell.x*2.)))*.5);
+            float sig=0.;
+            for(int i=0;i<3;i++){
+              float fi=float(i);
+              float ph=fract(time*.11+fi/3.);
+              float px=mod(fi,2.)<.5?mix(ax,bx,ph):mix(bx,ax,ph);
+              float py=hc.y+sin(px*.012-time*1.4)*cell.y*1.2;
+              sig=max(sig,exp(-pow((P.x-px)/(cell.x*5.),2.)-pow((P.y-py)/(cell.y*1.4),2.)));
+            }
+            return vec2(max(L,sig),step(.3,sig));
+          }
+
+          void main(){
+            vec2 P=gl_FragCoord.xy;
+            vec2 Pc=(floor(P/cell)+.5)*cell;
+            vec2 s=scene<.5?clouds(Pc):transmission(Pc);
+            float idx=floor(clamp(s.x,0.,.999)*glyphs);
+            vec2 local=fract(P/cell);
+            float g=texture2D(atlas,vec2((idx+local.x)/glyphs,1.-local.y)).a;
+            float a=min(1.,g*alpha*(1.+s.y*.6));
+            gl_FragColor=vec4(mix(ink,signal,s.y)*a,a);
+          }`;
+
+        const renderers = [];
+        const createRenderer = (canvas) => {
+          const gl = canvas.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: true });
+          if (!gl) return null;
+          const compile = (type, source) => {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            return gl.getShaderParameter(shader, gl.COMPILE_STATUS) ? shader : null;
+          };
+          const vs = compile(gl.VERTEX_SHADER, 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}');
+          const fs = compile(gl.FRAGMENT_SHADER, FS);
+          if (!vs || !fs) return null;
+          const program = gl.createProgram();
+          gl.attachShader(program, vs);
+          gl.attachShader(program, fs);
+          gl.linkProgram(program);
+          if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return null;
+          gl.useProgram(program);
+          gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+          gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+          const loc = gl.getAttribLocation(program, 'p');
+          gl.enableVertexAttribArray(loc);
+          gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+          const u = {};
+          ['res', 'cell', 'time', 'atlas', 'glyphs', 'ink', 'signal', 'alpha', 'scene', 'mask', 'vfade'].forEach((n) => { u[n] = gl.getUniformLocation(program, n); });
+
+          const cellScale = matchMedia('(max-width: 760px)').matches ? 0.75 : 1;
+          const [cw, ch] = (canvas.dataset.cell || '8,14').split(',').map((n) => Number(n) * cellScale);
+          const [m0, m1] = (canvas.dataset.mask || '-1,0').split(',').map(Number);
+          gl.uniform1f(u.scene, Number(canvas.dataset.scene || 0));
+          gl.uniform2f(u.mask, m0, m1);
+          gl.uniform1f(u.vfade, Number(canvas.dataset.vfade || 0));
+          gl.uniform1f(u.glyphs, RAMP.length);
+          const texture = gl.createTexture();
+          let dpr = 1, visible = false, frame = 0, last = 0;
+
+          const buildAtlas = () => {
+            const gw = Math.round(cw * dpr), gh = Math.round(ch * dpr);
+            const atlas = document.createElement('canvas');
+            atlas.width = gw * RAMP.length;
+            atlas.height = gh;
+            const ctx = atlas.getContext('2d');
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `700 ${Math.round(ch * 0.8 * dpr)}px "JetBrains Mono", ui-monospace, Menlo, monospace`;
+            [...RAMP].forEach((c, i) => ctx.fillText(c, i * gw + gw / 2, gh / 2 + dpr));
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.uniform1i(u.atlas, 0);
+            gl.uniform2f(u.cell, gw, gh);
+          };
+          const setColors = () => {
+            gl.uniform3fv(u.ink, rgb(css(canvas.dataset.ink || '--ink')));
+            gl.uniform3fv(u.signal, rgb(css('--signal-text')));
+            gl.uniform1f(u.alpha, Number(css('--ascii-alpha')) || 0.8);
+          };
+          const draw = (now) => {
+            gl.uniform1f(u.time, reduce.matches ? 18 : now / 1000);
+            gl.clearColor(0, 0, 0, 0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+          };
+          const loop = (now) => {
+            frame = 0;
+            if (!visible || reduce.matches || document.hidden) return;
+            if (now - last > 50) { last = now; draw(now); }
+            frame = requestAnimationFrame(loop);
+          };
+          const start = () => {
+            draw(performance.now());
+            if (!frame && visible && !reduce.matches && !document.hidden) frame = requestAnimationFrame(loop);
+          };
+          const resize = () => {
+            const rect = canvas.getBoundingClientRect();
+            const nextDpr = Math.min(window.devicePixelRatio || 1, 2);
+            canvas.width = Math.max(1, Math.round(rect.width * nextDpr));
+            canvas.height = Math.max(1, Math.round(rect.height * nextDpr));
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.uniform2f(u.res, canvas.width, canvas.height);
+            if (nextDpr !== dpr || !canvas.dataset.atlas) { dpr = nextDpr; buildAtlas(); canvas.dataset.atlas = '1'; }
+            draw(performance.now());
+          };
+
+          setColors();
+          resize();
+          new ResizeObserver(resize).observe(canvas);
+          new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; start(); }).observe(canvas);
+          document.addEventListener('visibilitychange', start);
+          reduce.addEventListener('change', start);
+          canvas.classList.add('is-ready');
+          canvas.parentElement.classList.add('has-ascii');
+          start();
+          return { refresh: () => { setColors(); draw(performance.now()); }, rebuild: () => { buildAtlas(); draw(performance.now()); } };
+        };
+
+        const boot = () => {
+          document.querySelectorAll('canvas.ascii').forEach((canvas) => {
+            const r = createRenderer(canvas);
+            if (r) renderers.push(r);
+          });
+          listeners.push(() => renderers.forEach((r) => r.refresh()));
+        };
+        // Glyphs are drawn from the web font; wait briefly for it, then redraw if it lands late.
+        const fontReady = document.fonts ? document.fonts.load('700 14px "JetBrains Mono"') : Promise.resolve();
+        Promise.race([fontReady, new Promise((ok) => setTimeout(ok, 800))]).then(() => {
+          boot();
+          if (document.fonts) document.fonts.ready.then(() => renderers.forEach((r) => r.rebuild()));
+        });
+      })();
+    </script>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --paper: #ffffff;
+    --ink: #0a0a0a;
+    --copy: #3a3a3a;
+    --muted: #6e6e6e;
+    --faint: #bdbdbd;
+    --rule: #0a0a0a;
+    --dash: #c9c9c9;
+    --rail: #ededed;
+    --signal: #27e36a;
+    --signal-ink: #0a0a0a;
+    --signal-text: #0a7d34;
+    --ascii-ink: #0a0a0a;
+    --ascii-soft: #9c9c9c;
+    --ascii-alpha: .85;
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+    --rail-w: 64px;
+    --pad: 64px;
+    --indent: 92px;
+    color-scheme: light;
+  }
+  :root[data-theme='dark'] {
+    --paper: #0b0b0b;
+    --ink: #ececec;
+    --copy: #bdbdbd;
+    --muted: #8a8a8a;
+    --faint: #3a3a3a;
+    --rule: #5a5a5a;
+    --dash: #2e2e2e;
+    --rail: #1c1c1c;
+    --signal: #3dff7f;
+    --signal-ink: #0a0a0a;
+    --signal-text: #3dff7f;
+    --ascii-ink: #d8d8d8;
+    --ascii-soft: #5c5c5c;
+    --ascii-alpha: .9;
+    color-scheme: dark;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { background: var(--paper); scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 15px/1.75 var(--mono);
+    font-variant-ligatures: none;
+    transition: background-color .2s ease, color .2s ease;
+  }
+  a { color: inherit; text-decoration: none; }
+  pre, code, button { font: inherit; }
+  pre { margin: 0; }
+  h1, h2, p, ul, ol, dl, dd, figure { margin: 0; padding: 0; }
+  ul, ol { list-style: none; }
+  :focus-visible { outline: 2px solid var(--signal-text); outline-offset: 3px; }
+  [id] { scroll-margin-top: 24px; }
+
+  .skip { position: absolute; left: 12px; top: -60px; z-index: 10; padding: 8px 12px; background: var(--signal); color: var(--signal-ink); font-size: 12px; }
+  .skip:focus { top: 12px; }
+
+  .label { color: var(--muted); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
+  .signal-text { color: var(--signal-text); }
+  mark, .tag { background: var(--signal); color: var(--signal-ink); padding: 1px 6px; }
+
+  /* masthead */
+  .masthead { font-size: 12px; letter-spacing: .08em; }
+  .bar { display: flex; align-items: center; gap: 36px; padding: 24px var(--pad); border-bottom: 1px solid var(--rule); }
+  .brand { display: flex; align-items: baseline; gap: 28px; margin-right: auto; }
+  .brand strong { font-weight: 800; font-size: 13px; letter-spacing: .12em; }
+  .brand span { color: var(--muted); }
+  nav { display: flex; gap: 36px; }
+  nav a { padding: 4px 0; border-bottom: 1px solid transparent; }
+  nav a:hover { border-color: var(--ink); }
+  .toggle { display: inline-flex; gap: 6px; align-items: center; padding: 6px 10px; border: 1px solid var(--ink); background: transparent; color: var(--ink); font-size: 12px; letter-spacing: .08em; cursor: pointer; }
+  .toggle:hover { background: var(--ink); color: var(--paper); }
+  .status { display: flex; flex-wrap: wrap; gap: 8px 40px; padding: 10px var(--pad); border-bottom: 1px dashed var(--dash); color: var(--muted); font-size: 11px; letter-spacing: .06em; }
+
+  /* document rows: a rail on the left, content on the right */
+  .row { position: relative; display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+  .rail { border-right: 1px solid var(--rail); color: var(--faint); font-size: 11px; text-align: center; }
+  .rail-lines { padding-top: 112px; line-height: 28px; }
+  .rail-mark { padding-top: 140px; letter-spacing: .04em; }
+  .body { padding: 0 var(--pad) 0 var(--indent); min-width: 0; }
+
+  /* hero */
+  .hero { border-bottom: 1px dashed var(--dash); overflow: hidden; }
+  .ascii { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0; transition: opacity .8s ease; }
+  .ascii.is-ready { opacity: 1; }
+  .hero-body { position: relative; display: flex; justify-content: space-between; align-items: flex-start; gap: 64px; padding-top: 112px; padding-bottom: 128px; }
+  .hero-copy { display: flex; flex-direction: column; gap: 36px; max-width: 780px; }
+  h1 { font-weight: 800; font-size: clamp(44px, 6.4vw, 92px); line-height: 1.04; letter-spacing: -.055em; }
+  .lede { max-width: 620px; color: var(--copy); font-size: 16px; line-height: 28px; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .btn { display: inline-flex; align-items: center; min-height: 48px; padding: 0 20px; font-size: 13px; letter-spacing: .06em; transition: background-color .15s ease, color .15s ease; }
+  .btn-signal { background: var(--signal); color: var(--signal-ink); font-weight: 700; }
+  .btn-signal:hover { background: var(--ink); color: var(--paper); }
+  .btn-line { border: 1px solid var(--ink); }
+  .btn-line:hover { background: var(--ink); color: var(--paper); }
+  .hint { padding-left: 16px; color: var(--muted); font-size: 13px; }
+
+  .session { flex: 0 0 440px; margin-top: 64px; background: var(--paper); box-shadow: 0 0 0 20px var(--paper); font-size: 12px; }
+  .session figcaption { display: flex; justify-content: space-between; padding-top: 8px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 11px; letter-spacing: .08em; }
+  .live { display: inline-flex; align-items: center; gap: 6px; color: var(--signal-text); }
+  .live i { width: 7px; height: 7px; background: var(--signal); }
+  .log { padding: 20px 0; line-height: 26px; white-space: pre; overflow-x: auto; }
+  .tabs { padding: 10px 0; border-top: 1px dashed var(--dash); color: var(--muted); font-size: 11px; line-height: 22px; overflow-x: auto; }
+  .prompt { padding-top: 10px; border-top: 1px solid var(--rule); }
+  .cursor { animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* facts */
+  .facts { border-bottom: 1px solid var(--rule); }
+  .facts ul { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding-top: 18px; padding-bottom: 18px; font-size: 12px; letter-spacing: .1em; }
+  .facts li { display: flex; gap: 24px; }
+  .facts li + li::before { content: '/'; color: var(--faint); }
+  .facts li:last-child { font-weight: 700; }
+
+  /* ASCII transmission band */
+  .transmission { position: relative; height: clamp(520px, 72vh, 720px); border-bottom: 1px solid var(--rule); overflow: hidden; }
+  .ascii-fallback { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ascii-soft); font-size: 11px; line-height: 13px; white-space: pre; overflow: hidden; transition: opacity .6s ease; }
+  .has-ascii .ascii-fallback { opacity: 0; }
+  .tx-labels { position: absolute; inset: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+  .tx-labels span { position: absolute; padding: 2px 8px; background: var(--paper); white-space: nowrap; }
+  .tx-labels b { font-weight: 400; color: var(--muted); text-transform: none; letter-spacing: 0; margin-left: 8px; }
+  .tx-corner { color: var(--muted); }
+  .tx-tl { top: 28px; left: var(--pad); }
+  .tx-tr { top: 28px; right: var(--pad); }
+  .tx-bl { bottom: 28px; left: var(--pad); display: inline-flex; align-items: center; gap: 8px; }
+  .tx-bl i { width: 8px; height: 8px; background: var(--signal); }
+  .tx-br { bottom: 28px; right: var(--pad); }
+  .tx-node { top: calc(24% - 34px); color: var(--ink); font-weight: 700; }
+  .tx-left { left: 7%; }
+  .tx-right { left: 69%; }
+  .tx-hub { top: calc(46% + min(13%, 8vw) + 30px); left: 50%; transform: translateX(-50%); text-align: center; }
+  .horizon { position: relative; height: 220px; border-top: 1px dashed var(--dash); overflow: hidden; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* sections */
+  .section { border-bottom: 1px dashed var(--dash); }
+  .section > .body { padding-top: 136px; padding-bottom: 136px; }
+  .section-last > .body { padding-bottom: 160px; }
+  .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px 24px; margin-bottom: 48px; }
+  h2 { font-weight: 800; font-size: clamp(32px, 3.4vw, 44px); line-height: 1.1; letter-spacing: -.04em; }
+  .split { display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); gap: 88px; align-items: start; }
+  .split-intro { display: flex; flex-direction: column; align-items: flex-start; gap: 20px; }
+  .split-intro > p:not(.label) { color: var(--copy); font-size: 14px; line-height: 24px; }
+  .split-intro .btn { margin-top: 12px; }
+
+  .table { border-top: 1px solid var(--rule); font-size: 14px; line-height: 24px; }
+  .table .tr, .table .th { display: grid; gap: 8px 24px; padding: 22px 0; border-bottom: 1px dashed var(--dash); }
+  .table .th { padding: 12px 0; border-bottom: 1px solid var(--rule); color: var(--muted); font-size: 11px; letter-spacing: .1em; }
+  .table > .tr:last-child { border-bottom: 0; }
+  .num { color: var(--muted); }
+
+  .modules .tr { grid-template-columns: 56px 280px minmax(0, 1fr); font-size: 15px; line-height: 26px; }
+  .modules dt { font-weight: 700; letter-spacing: .04em; }
+  .modules dd { color: var(--copy); max-width: 760px; }
+
+  .steps { border-top: 0; }
+  .steps .th, .steps .tr { grid-template-columns: 56px minmax(0, 260px) minmax(0, 1fr); padding: 20px 0; }
+  .steps .th { padding: 0 0 12px; }
+  .steps code { color: var(--copy); overflow-wrap: anywhere; }
+
+  .boundary .th, .boundary .tr { grid-template-columns: 260px 240px minmax(0, 1fr); }
+  .boundary .tr { padding: 24px 0; }
+  .boundary .tr > span:last-child { color: var(--copy); max-width: 640px; }
+  .footnote { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 12px; line-height: 22px; }
+  .footnote a { color: var(--ink); border-bottom: 1px solid var(--faint); }
+  .footnote a:hover { border-color: var(--ink); }
+
+  .docs .tr { grid-template-columns: 220px minmax(0, 1fr) 16px; padding: 20px 0; transition: color .15s ease; }
+  .docs li:last-child .tr { border-bottom: 1px solid var(--rule); }
+  .docs .tr span:nth-child(2) { color: var(--copy); }
+  .docs .tr:hover, .docs .tr:hover span { color: var(--signal-text); }
+
+  .footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding: 20px var(--pad); border-top: 1px solid var(--rule); color: var(--muted); font-size: 11px; letter-spacing: .1em; }
+
+  @media (max-width: 1180px) {
+    .hero-body { flex-direction: column; gap: 56px; }
+    .session { flex-basis: auto; width: 100%; max-width: 520px; margin-top: 0; }
+    .split { grid-template-columns: 1fr; gap: 48px; }
+    .ascii-hero.is-ready { opacity: .55; }
+    .boundary .th, .boundary .tr { grid-template-columns: 200px 200px minmax(0, 1fr); }
+  }
+
+  @media (max-width: 760px) {
+    :root { --rail-w: 0px; --pad: 20px; --indent: 20px; }
+    body { font-size: 14px; }
+    .rail { display: none; }
+    .row { grid-template-columns: minmax(0, 1fr); }
+    .bar { flex-wrap: wrap; gap: 14px 20px; padding-top: 18px; padding-bottom: 18px; }
+    .brand { gap: 12px; flex-direction: column; }
+    .brand span { font-size: 10px; }
+    nav { order: 3; width: 100%; gap: 24px; padding-top: 12px; border-top: 1px dashed var(--dash); }
+    .status { gap: 4px 20px; font-size: 10px; }
+    .hero-body { padding-top: 64px; padding-bottom: 72px; gap: 48px; }
+    .hero-copy { gap: 28px; }
+    h1 { font-size: clamp(40px, 11.6vw, 60px); }
+    .lede { font-size: 15px; line-height: 26px; }
+    .hint { padding-left: 0; width: 100%; }
+    .ascii-hero.is-ready { opacity: .45; }
+    .transmission { height: 460px; }
+    .tx-tr, .tx-br { display: none; }
+    .tx-node { font-size: 10px; }
+    .tx-node b { display: block; }
+    .tx-left { left: 4%; }
+    .tx-right { left: auto; right: 4%; text-align: right; }
+    .horizon { height: 140px; }
+    .facts ul { justify-content: flex-start; gap: 6px 16px; font-size: 11px; }
+    .facts li { gap: 16px; }
+    .section > .body, .section-last > .body { padding-top: 80px; padding-bottom: 80px; }
+    .section-head { margin-bottom: 32px; }
+    .table .th { display: none; }
+    .steps .tr, .modules .tr { grid-template-columns: 40px minmax(0, 1fr); }
+    .modules dd, .steps code { grid-column: 2; }
+    .boundary .tr { grid-template-columns: minmax(0, 1fr) auto; }
+    .boundary .tr > span:last-child { grid-column: 1 / -1; }
+    .docs .tr { grid-template-columns: minmax(0, 1fr) 16px; }
+    .docs .tr span:nth-child(2) { grid-column: 1; grid-row: 2; }
+    .docs .tr span:last-child { grid-column: 2; grid-row: 1; }
+    .footer { flex-direction: column; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation: none !important; transition-duration: .01ms !important; }
+  }
+</style>

@@ -1,9 +1,8 @@
 package main
 
-// Abuse control. Every limit exists at three levels; the most specific non-zero value
-// wins: server default → channel override → user override. Limits are keyed by
-// account (or guest nick), not IP, so an office behind one NAT doesn't share a bucket
-// and one patient attacker with many IPs doesn't get many buckets.
+// Abuse control. Every content limit exists at three levels; the most specific non-zero
+// value wins: server default → channel override → user override. Message and upload
+// buckets are keyed by account (or guest nick), while connection limits are keyed by IP.
 
 import (
 	"fmt"

@@ -71,6 +71,20 @@ func (c *client) storeChanKey(chName string, epoch int, key []byte) {
 	})
 }
 
+func (c *client) initCreatedE2EKeys(channels []ChanInfo) {
+	for _, ci := range channels {
+		if !ci.E2E || ci.Epoch == 0 {
+			continue
+		}
+		key, err := newChannelKey()
+		if err != nil {
+			c.sys("e2e: could not generate the initial channel key: " + err.Error())
+			continue
+		}
+		c.storeChanKey(ci.Name, ci.Epoch, key)
+	}
+}
+
 // maybeRequestKey sends one keyreq for ch's current epoch if this channel is e2e, we
 // don't already hold that epoch's key, and we haven't already asked. Safe to call
 // repeatedly (e.g. every time ChanInfo arrives, or someone new joins the channel).
@@ -182,7 +196,11 @@ func (c *client) rotateAndReshare(chName string) {
 			return
 		}
 		ch.epoch = epoch
-		key := newChannelKey()
+		key, err := newChannelKey()
+		if err != nil {
+			c.sys("e2e rotate: could not generate a channel key: " + err.Error())
+			return
+		}
 		c.storeChanKey(chName, epoch, key)
 		c.sys(fmt.Sprintf("🔒 #%s rotated to epoch %d — sharing the new key with everyone online", chName, epoch))
 		c.reshareToOnlinePeers(chName, epoch, key)

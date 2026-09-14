@@ -22,9 +22,55 @@ type httpReq struct {
 	length       int64
 }
 
+const (
+	maxHTTPLine    = 8 << 10
+	maxHTTPHeaders = 32 << 10
+)
+
+func readHTTPLine(r *bufio.Reader, limit int) (string, error) {
+	b, err := r.ReadSlice('\n')
+	if err != nil {
+		return "", err
+	}
+	if len(b) > limit {
+		return "", fmt.Errorf("http line too long")
+	}
+	return string(b), nil
+}
+
+func readHTTPHeaders(r *bufio.Reader) (map[string]string, error) {
+	headers := map[string]string{}
+	total := 0
+	for {
+		h, err := readHTTPLine(r, maxHTTPLine)
+		if err != nil {
+			return nil, err
+		}
+		total += len(h)
+		if total > maxHTTPHeaders {
+			return nil, fmt.Errorf("http headers too large")
+		}
+		h = strings.TrimRight(h, "\r\n")
+		if h == "" {
+			return headers, nil
+		}
+		k, v, ok := strings.Cut(h, ":")
+		if !ok || strings.TrimSpace(k) == "" {
+			return nil, fmt.Errorf("malformed http header")
+		}
+		k = strings.ToLower(strings.TrimSpace(k))
+		if k == "content-length" {
+			if _, exists := headers[k]; exists {
+				return nil, fmt.Errorf("duplicate content-length")
+			}
+		}
+		headers[k] = strings.TrimSpace(v)
+	}
+}
+
 // readRequest parses the request line + headers from r.
 func readRequest(r *bufio.Reader) (*httpReq, error) {
-	line, err := r.ReadString('\n')
+	line, err := readHTTPLine(r, maxHTTPLine)
 	if err != nil {
 		return nil, err
 	}
@@ -34,20 +80,19 @@ func readRequest(r *bufio.Reader) (*httpReq, error) {
 	}
 	q := &httpReq{method: parts[0], header: map[string]string{}, query: map[string]string{}}
 	q.path, q.query = splitQuery(parts[1])
-	for {
-		h, err := r.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		h = strings.TrimRight(h, "\r\n")
-		if h == "" {
-			break
-		}
-		if k, v, ok := strings.Cut(h, ":"); ok {
-			q.header[strings.ToLower(strings.TrimSpace(k))] = strings.TrimSpace(v)
+	q.header, err = readHTTPHeaders(r)
+	if err != nil {
+		return nil, err
+	}
+	if raw, ok := q.header["content-length"]; ok {
+		q.length, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || q.length < 0 {
+			return nil, fmt.Errorf("invalid content-length")
 		}
 	}
-	q.length, _ = strconv.ParseInt(q.header["content-length"], 10, 64)
+	if te := q.header["transfer-encoding"]; te != "" && !strings.EqualFold(te, "identity") {
+		return nil, fmt.Errorf("unsupported transfer-encoding")
+	}
 	q.body = io.LimitReader(r, q.length)
 	return q, nil
 }
@@ -118,6 +163,8 @@ func statusText(c int) string {
 	switch c {
 	case 200:
 		return "OK"
+	case 400:
+		return "Bad Request"
 	case 401:
 		return "Unauthorized"
 	case 404:
@@ -161,7 +208,7 @@ func httpDo(dial dialFunc, addr, method, target string, headers map[string]strin
 	}
 	br := bufio.NewReaderSize(conn, 32<<10)
 	readStatus := func() (int, error) {
-		line, err := br.ReadString('\n')
+		line, err := readHTTPLine(br, maxHTTPLine)
 		if err != nil {
 			return 0, err
 		}
@@ -169,7 +216,10 @@ func httpDo(dial dialFunc, addr, method, target string, headers map[string]strin
 		if len(f) < 2 {
 			return 0, fmt.Errorf("bad status line %q", strings.TrimSpace(line))
 		}
-		st, _ := strconv.Atoi(f[1])
+		st, err := strconv.Atoi(f[1])
+		if err != nil {
+			return 0, fmt.Errorf("bad status code %q", f[1])
+		}
 		return st, nil
 	}
 	status, err := readStatus()
@@ -178,11 +228,9 @@ func httpDo(dial dialFunc, addr, method, target string, headers map[string]strin
 		return 0, nil, nil, nil, err
 	}
 	if body != nil && status == 100 {
-		for { // skip the (empty) 100 headers
-			h, err := br.ReadString('\n')
-			if err != nil || strings.TrimRight(h, "\r\n") == "" {
-				break
-			}
+		if _, err := readHTTPHeaders(br); err != nil {
+			conn.Close()
+			return 0, nil, nil, nil, err
 		}
 		if _, err := io.Copy(conn, body); err != nil {
 			conn.Close()
@@ -193,22 +241,19 @@ func httpDo(dial dialFunc, addr, method, target string, headers map[string]strin
 			return 0, nil, nil, nil, err
 		}
 	}
-	hdr := map[string]string{}
-	for {
-		h, err := br.ReadString('\n')
-		if err != nil {
+	hdr, err := readHTTPHeaders(br)
+	if err != nil {
+		conn.Close()
+		return 0, nil, nil, nil, err
+	}
+	n := int64(0)
+	if raw, ok := hdr["content-length"]; ok {
+		n, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || n < 0 {
 			conn.Close()
-			return 0, nil, nil, nil, err
-		}
-		h = strings.TrimRight(h, "\r\n")
-		if h == "" {
-			break
-		}
-		if k, v, ok := strings.Cut(h, ":"); ok {
-			hdr[strings.ToLower(strings.TrimSpace(k))] = strings.TrimSpace(v)
+			return 0, nil, nil, nil, fmt.Errorf("invalid content-length")
 		}
 	}
-	n, _ := strconv.ParseInt(hdr["content-length"], 10, 64)
 	var rd io.Reader = br
 	if hdr["content-length"] != "" {
 		rd = io.LimitReader(br, n)

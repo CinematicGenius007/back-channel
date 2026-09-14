@@ -1,11 +1,12 @@
 #!/usr/bin/env sh
-# Cross-compile bch for every platform you own. Requires Go 1.24+.
+# Cross-compile bch for the supported platform matrix. Requires Go 1.24+.
 #   ./build.sh            → dist/
 #   OUT=../builds ./build.sh
 set -e
 cd "$(dirname "$0")"
 OUT="${OUT:-dist}"
 mkdir -p "$OUT"
+rm -f "$OUT"/bch-*
 LD="-s -w"
 GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "$LD" -o "$OUT/bch-darwin-arm64" .
 GOOS=darwin  GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "$LD" -o "$OUT/bch-darwin-amd64" .

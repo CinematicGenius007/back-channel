@@ -190,10 +190,12 @@ func unwrapChannelKey(priv *ecdh.PrivateKey, peerPubB64, ch string, epoch int, w
 }
 
 // newChannelKey generates a fresh random 32-byte AES-256 key for a channel epoch.
-func newChannelKey() []byte {
+func newChannelKey() ([]byte, error) {
 	k := make([]byte, 32)
-	rand.Read(k)
-	return k
+	if _, err := rand.Read(k); err != nil {
+		return nil, err
+	}
+	return k, nil
 }
 
 // keyFingerprint renders a device public key the way a person compares it out of band:

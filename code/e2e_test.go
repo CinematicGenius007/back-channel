@@ -15,7 +15,10 @@ import (
 )
 
 func TestE2ECryptoRoundTrip(t *testing.T) {
-	key := newChannelKey()
+	key, err := newChannelKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 	ct, err := encryptText(key, "design", 1, "hello world")
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +37,10 @@ func TestE2ECryptoRoundTrip(t *testing.T) {
 	if _, err := decryptText(key, "design", 2, ct); err == nil {
 		t.Fatal("decrypted under the wrong epoch")
 	}
-	wrongKey := newChannelKey()
+	wrongKey, err := newChannelKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := decryptText(wrongKey, "design", 1, ct); err == nil {
 		t.Fatal("decrypted with the wrong key")
 	}
@@ -67,7 +73,10 @@ func TestE2EKeyWrapRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	alicePub, bobPub := pubFromPriv(alicePriv), pubFromPriv(bobPriv)
-	key := newChannelKey()
+	key, err := newChannelKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	wrapped, err := wrapChannelKey(alicePriv, bobPub, "design", 1, key)
 	if err != nil {
@@ -103,6 +112,15 @@ func TestKeyFingerprintStable(t *testing.T) {
 	}
 }
 
+func TestCreatedE2EChannelGetsInitialKey(t *testing.T) {
+	c := &client{dir: t.TempDir()}
+	c.initCreatedE2EKeys([]ChanInfo{{Name: "secret", E2E: true, Epoch: 1}})
+	key, ok := c.chanKey("secret", 1)
+	if !ok || len(key) != 32 {
+		t.Fatalf("created channel key missing or wrong length: %d, %v", len(key), ok)
+	}
+}
+
 // ---- full hub-relayed flow ----------------------------------------------------------
 //
 // These drive the raw `tc` test connection directly with keyreq/keyshare/msg frames —
@@ -125,7 +143,10 @@ func TestE2EFullFlow(t *testing.T) {
 		t.Fatalf("create e2e: %+v", res.Channels[0])
 	}
 	owner.sub("secret")
-	channelKey := newChannelKey()
+	channelKey, err := newChannelKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	mustOK(t, owner.cmd("useradd", "", map[string]string{"name": "bob", "pass": "bobpassword"}))
 	bobPriv, _ := genDeviceKey()
