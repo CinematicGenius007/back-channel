@@ -47,10 +47,15 @@ The public site lives in `site/`. It is a static Astro build with no runtime bac
 
 ```sh
 cd site
-npm install
-npm run dev       # local preview
-npm run build     # writes site/dist/
+pnpm install
+pnpm dev          # local preview
+pnpm build        # writes site/dist/
 ```
+
+For Cloudflare Pages, set the project root to `site`, the build command to `pnpm build`,
+and the output directory to `dist`. After `wrangler login` and creating the Pages project,
+deploy explicitly with `pnpm run deploy`; this uses `wrangler pages deploy` for the static
+output, not the Workers `wrangler deploy` command.
 
 The whole site is one file, `site/src/pages/index.astro`. Its ASCII figures are drawn by a
 WebGL shader; without WebGL the page shows a static ASCII fallback instead.

@@ -2,12 +2,18 @@
   "name": "backchannel-site",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.25.0",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "deploy": "pnpm build && wrangler pages deploy dist --project-name back-channel",
+    "cloudflare:preview": "pnpm build && wrangler pages dev dist"
   },
   "dependencies": {
     "astro": "^7.3.2"
+  },
+  "devDependencies": {
+    "wrangler": "4.131.1"
   }
 }
