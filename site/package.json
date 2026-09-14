@@ -7,7 +7,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "deploy": "pnpm build && wrangler pages deploy dist --project-name back-channel",
+    "deploy": "pnpm build && wrangler pages deploy dist",
     "cloudflare:preview": "pnpm build && wrangler pages dev dist"
   },
   "dependencies": {

@@ -54,7 +54,8 @@ pnpm build        # writes site/dist/
 
 For Cloudflare Pages, set the project root to `site`, the build command to `pnpm build`,
 and the output directory to `dist`. After `wrangler login` and creating the Pages project,
-deploy explicitly with `pnpm run deploy`; this uses `wrangler pages deploy` for the static
+deploy explicitly with `pnpm run deploy`. The checked-in `site/wrangler.toml` supplies the
+Pages project name and output directory; this uses `wrangler pages deploy` for the static
 output, not the Workers `wrangler deploy` command.
 
 The whole site is one file, `site/src/pages/index.astro`. Its ASCII figures are drawn by a
