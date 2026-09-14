@@ -114,7 +114,9 @@ func envOr(k, def string) string {
 
 func randHex(n int) string {
 	b := make([]byte, n)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand: %v", err))
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -122,12 +124,25 @@ const alnum = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0
 
 // randAlnum returns n characters from an unambiguous alphabet (~5.8 bits each).
 func randAlnum(n int) string {
-	b := make([]byte, n)
-	rand.Read(b)
-	for i := range b {
-		b[i] = alnum[int(b[i])%len(alnum)]
+	out := make([]byte, n)
+	limit := 256 - (256 % len(alnum))
+	for filled := 0; filled < n; {
+		b := make([]byte, n-filled)
+		if _, err := rand.Read(b); err != nil {
+			panic(fmt.Sprintf("crypto/rand: %v", err))
+		}
+		for _, v := range b {
+			if int(v) >= limit {
+				continue
+			}
+			out[filled] = alnum[int(v)%len(alnum)]
+			filled++
+			if filled == n {
+				break
+			}
+		}
 	}
-	return string(b)
+	return string(out)
 }
 
 func loadConfig(dir string) Config {

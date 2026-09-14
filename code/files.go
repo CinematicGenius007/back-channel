@@ -100,6 +100,7 @@ func (h *hub) handleHTTP(conn net.Conn) {
 	conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	req, err := readRequest(bufio.NewReaderSize(conn, 32<<10))
 	if err != nil {
+		writeText(conn, 400, "bad request\n")
 		return
 	}
 	conn.SetReadDeadline(time.Time{})

@@ -152,7 +152,7 @@ func (c *client) handleInput(line string) bool {
 		args, plain := kv(f[1:])
 		args["name"] = f[0]
 		args["topic"] = strings.Join(plain, " ")
-		c.cmd("create", args, c.onJoined)
+		c.cmd("create", args, c.onCreated)
 	case "join":
 		if arg == "" {
 			c.sys("usage: /join INVITE-CODE")
@@ -452,6 +452,18 @@ func (c *client) onJoined(m Msg) {
 		c.write(Msg{T: "sub", Ch: ch.name, Since: ch.lastID})
 		c.switchTo(ch)
 	}
+}
+
+// onCreated initializes the first key locally. The hub creates the channel epoch,
+// but must never receive the corresponding key; later devices obtain it through the
+// live key-request/key-share exchange.
+func (c *client) onCreated(m Msg) {
+	if !m.OK {
+		c.printRes(m)
+		return
+	}
+	c.initCreatedE2EKeys(m.Channels)
+	c.onJoined(m)
 }
 
 func (c *client) cycle(d int) {

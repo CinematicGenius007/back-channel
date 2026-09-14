@@ -1,5 +1,8 @@
 # backchannel (`bch`)
 
+> A small, self-hosted relay for moving text, files, and clipboard data between trusted
+> devices and groups. No cloud account. No browser. One binary.
+
 A private, self-hosted set of chat channels for your own machines and a small group of
 people you trust. Type text, paste your clipboard, or drag a file into the terminal — it
 shows up on every other device in that channel and lands in their `inbox` folder. Your
@@ -37,6 +40,20 @@ and optional end-to-end encryption.
 | [PROTOCOL.md](PROTOCOL.md) | script against the hub (JSON frames, HTTP upload/download, curl) |
 | [WINDOWS-SETUP.md](WINDOWS-SETUP.md) | step-by-step Windows client install |
 | [PHASE2-DESIGN.md](PHASE2-DESIGN.md) | the design spec and the reasoning behind it |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | code, tests, docs, and pull-request expectations |
+| [AGENTS.md](AGENTS.md) | concise instructions for coding agents working in this repository |
+
+The public site lives in `site/`. It is a static Astro build with no runtime backend:
+
+```sh
+cd site
+npm install
+npm run dev       # local preview
+npm run build     # writes site/dist/
+```
+
+The whole site is one file, `site/src/pages/index.astro`. Its ASCII figures are drawn by a
+WebGL shader; without WebGL the page shows a static ASCII fallback instead.
 
 ## Design in one table
 
@@ -69,7 +86,8 @@ Override with `BCH_DIR` or `-dir`.
 # needs Go 1.24+ (brew install go / winget install GoLang.Go)
 cd code
 go build -o bch .        # for this machine
-./build.sh               # → dist/bch-darwin-arm64, -darwin-amd64, -windows-amd64.exe, -linux-amd64, …
+chmod +x build.sh         # only needed if the checkout lost executable bits
+./build.sh                # → six macOS, Windows, and Linux arm64/amd64 binaries in dist/
 go test ./...            # permissions matrix, secrecy rule, moderation, files, expiry, guests, e2e crypto + key exchange
 ```
 

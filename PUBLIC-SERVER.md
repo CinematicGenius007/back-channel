@@ -28,8 +28,9 @@ Everything — passwords at login, messages, files, clipboard — is encrypted i
 
 **2. Accounts.** Every person has their own username and password (PBKDF2-SHA256, 600k
 rounds). Clients keep a revocable session token, never the password. Failed logins are
-rate-limited **per username** (5/min) as well as per IP, so an attacker with many IPs still
-cannot walk through one account. Removing a person is `/admin ban NAME` — nothing else changes.
+rate-limited **per username** (5/min); new connections are also rate-limited per source IP,
+so an attacker cannot rapidly walk through one account or open an unlimited number of tries
+from one address. Removing a person is `/admin ban NAME` — nothing else changes.
 
 **3. Unlisted channels.** You cannot see, join, or confirm the existence of a channel you
 were not invited to. Invite codes have ~60 bits of entropy, limited uses and an expiry.
@@ -185,8 +186,10 @@ device, or `/logout all`; an admin can `/admin mod NAME pass=NEW` (revokes all t
 `/settings expire=30d` on busy channels so they clean themselves.
 
 **Back up:** the whole `/var/lib/backchannel/hub` directory. `state.json` is rewritten
-atomically, so a live copy is consistent. `cert.pem`/`key.pem` matter most — restoring
-without them means every client sees a fingerprint change and must re-pin.
+atomically, so that individual file is never left truncated; take a filesystem snapshot or
+stop the hub if you need a point-in-time-consistent backup of the whole directory.
+`cert.pem`/`key.pem` matter most — restoring without them means every client sees a
+fingerprint change and must re-pin.
 
 **Reinstall / new certificate:** tell users the new fingerprint; they reconnect with
 `-fingerprint NEW` (the error they see tells them exactly this).
