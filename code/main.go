@@ -42,6 +42,10 @@ type Config struct {
 	Notify   string   `json:"notify,omitempty"`    // "off" to silence the bell (default on)
 	Active   string   `json:"active,omitempty"`    // last active channel
 	Watch    []string `json:"watch,omitempty"`     // channels that auto-download even when not active
+
+	Theme string `json:"theme,omitempty"` // app TUI colour theme (theme.go)
+	Mouse string `json:"mouse,omitempty"` // "off" disables mouse/touch input in the app TUI
+	UI    string `json:"ui,omitempty"`    // "classic" always uses the line-mode TUI
 }
 
 func main() {
@@ -53,6 +57,9 @@ func main() {
 			return
 		case "send":
 			runSend(args[1:])
+			return
+		case "setup":
+			runClient(append([]string{"-setup"}, args[1:]...))
 			return
 		case "discover":
 			for _, h := range discover(1500) {
@@ -76,14 +83,18 @@ func usage() {
   bch serve [-port 7777] [-dir D]            run the hub (accounts, channels, history, files)
   bch serve -public                          hub for the internet: TLS + fingerprint pin + strict limits
   bch serve -reset-owner                     print a new password for the owner account
+  bch                                        open the app (first run: setup — hub, device, account, look)
+  bch setup                                  go through setup again
+  bch -classic                               the line-mode interface instead of the full-screen one
   bch [-hub [tls://]HOST[:PORT]] -user NAME  join with an account (asks for the password once)
   bch -hub HOST -invite CODE -user NAME      create an account from an invite code
   bch -hub HOST -token X                     join as a guest (shared token, if the hub allows it)
   bch send [-ch NAME] <file | text...>       one-shot drop into a channel (stdin if no arg)
   bch discover                               find hubs on this LAN
 
-Inside the TUI:
-  type to chat · drag a file into the window and press Enter to send it · /help for everything
+Inside the app:
+  type to chat · drag a file into the window and press Enter to send it
+  /  command suggestions · Ctrl-K command list · F2 Manage · F1 keys · /help for everything
   channels:   /1 … /9  /n  /p  /c NAME  /channels  /join CODE  /leave  /create NAME [topic]
   files:      /send PATH  /get [#id]  /open  /watch [NAME]
   clipboard:  /paste  /copy [#id]  /clip on|off|push|pull

@@ -52,6 +52,8 @@ type chanState struct {
 	files             map[int64]Msg
 	saved             map[int64]string // message id → path we downloaded to (for cleanup on expiry)
 	lines             []line
+	online            []string // who is here now (from who/join/part); nil until known
+	members           int
 }
 
 func (ch *chanState) rendered() []string {
@@ -143,7 +145,8 @@ type client struct {
 	legacy      bool // talking to a v1 hub: one channel, frames carry no `ch`
 	legacySince atomic.Int64
 	events      chan Msg
-	ui          *tui
+	ui          ui
+	quietWho    map[string]bool // channels whose next who reply only updates presence (app TUI)
 
 	chans     []*chanState
 	active    *chanState
@@ -165,6 +168,7 @@ type client struct {
 
 type clientFlags struct {
 	user, invite, ch string
+	classic, setup   bool
 }
 
 // parseClientFlags fills cfg from saved config, then flags, then defaults.
@@ -180,6 +184,8 @@ func parseClientFlags(name string, args []string) (Config, string, clientFlags) 
 	fp := fs.String("fingerprint", "", "pin the hub's certificate fingerprint (printed by `serve -tls`)")
 	useTLS := fs.Bool("tls", false, "connect with TLS (same as a tls:// hub address)")
 	ch := fs.String("ch", "", "channel to send to (send only; default: last active channel)")
+	classic := fs.Bool("classic", false, "use the classic line-mode interface instead of the full-screen one")
+	setup := fs.Bool("setup", false, "go through setup again (hub, device, account, look)")
 	fs.Parse(args)
 
 	cfg := loadConfig(*dir)
@@ -211,23 +217,30 @@ func parseClientFlags(name string, args []string) (Config, string, clientFlags) 
 			cfg.Name = envOr("USER", envOr("USERNAME", "me"))
 		}
 	}
-	if cfg.Hub == "" {
-		fmt.Fprint(os.Stderr, "no hub configured, looking on the LAN... ")
-		found := discover(1500)
-		if len(found) == 0 {
-			fmt.Fprintf(os.Stderr, "none found.\nStart one with `%s serve` or pass -hub HOST[:PORT].\n", binName)
-			os.Exit(1)
-		}
-		cfg.Hub = found[0]
-		fmt.Fprintln(os.Stderr, "found", cfg.Hub)
-	}
 	saveConfig(*dir, cfg)
-	return cfg, *dir, clientFlags{user: *user, invite: *invite, ch: *ch}
+	return cfg, *dir, clientFlags{user: *user, invite: *invite, ch: *ch, classic: *classic, setup: *setup}
+}
+
+// ensureHub fills in a hub from LAN discovery for the classic TUI and `bch send`,
+// which have no setup screen; it exits with a hint when none is found.
+func ensureHub(cfg *Config, dir string) {
+	if cfg.Hub != "" {
+		return
+	}
+	fmt.Fprint(os.Stderr, "no hub configured, looking on the LAN... ")
+	found := discover(1500)
+	if len(found) == 0 {
+		fmt.Fprintf(os.Stderr, "none found.\nStart one with `%s serve` or pass -hub HOST[:PORT].\n", binName)
+		os.Exit(1)
+	}
+	cfg.Hub = found[0]
+	fmt.Fprintln(os.Stderr, "found", cfg.Hub)
+	saveConfig(dir, *cfg)
 }
 
 func newClient(cfg Config, dir string) *client {
 	c := &client{cfg: cfg, dir: dir, events: make(chan Msg, 512), wake: make(chan struct{}, 1),
-		readDirty: map[string]int64{}, waiting: map[string]func(Msg){}}
+		readDirty: map[string]int64{}, waiting: map[string]func(Msg){}, quietWho: map[string]bool{}}
 	c.maxMsg.Store(64 << 10)
 	var useTLS bool
 	c.tcpAddr, c.httpAddr, useTLS = splitHub(cfg.Hub, 7777)
@@ -730,13 +743,18 @@ func (c *client) sysIn(ch *chanState, s string) { c.addLine(ch, dim("— "+s)) }
 func runClient(args []string) {
 	debug.SetGCPercent(50) // this process idles 99% of the time; trade CPU for heap
 	cfg, dir, f := parseClientFlags(binName, args)
+	if !f.classic && cfg.UI != "classic" && os.Getenv("BCH_CLASSIC") == "" && runApp(cfg, dir, f) {
+		return
+	}
+	ensureHub(&cfg, dir)
 	c := newClient(cfg, dir)
 	c.bootstrapAuth(f)
 	c.clipOn.Store(c.snapshot().ClipSync)
 
-	c.ui = newTUI()
-	c.ui.init()
-	defer c.ui.cleanup()
+	t := newTUI()
+	c.ui = t
+	t.init()
+	defer t.cleanup()
 	defer echoOn()
 
 	sig := make(chan os.Signal, 1)
@@ -1025,6 +1043,9 @@ func (c *client) handleEvent(m Msg) {
 		c.drawStatus()
 	case "join":
 		ch := c.chanFor(m.Ch)
+		if ch.online != nil && !containsFold(ch.online, m.From) {
+			ch.online = append(ch.online, m.From)
+		}
 		if !c.isMe(m.From) {
 			c.sysIn(ch, m.From+" joined")
 			if ch.e2e { // a peer who might hold the key just came online — ask again
@@ -1033,8 +1054,18 @@ func (c *client) handleEvent(m Msg) {
 			}
 		}
 	case "part":
+		ch := c.chanFor(m.Ch)
+		if ch.online != nil {
+			kept := ch.online[:0]
+			for _, u := range ch.online {
+				if !strings.EqualFold(u, m.From) {
+					kept = append(kept, u)
+				}
+			}
+			ch.online = kept
+		}
 		if !c.isMe(m.From) {
-			c.sysIn(c.chanFor(m.Ch), m.From+" left")
+			c.sysIn(ch, m.From+" left")
 		}
 	case "kicked", "banned":
 		ch := c.chanFor(m.Ch)
@@ -1101,7 +1132,14 @@ func (c *client) handleEvent(m Msg) {
 	case "keyshare":
 		c.onKeyShare(m)
 	case "who":
-		c.sysIn(c.chanFor(m.Ch), "online: "+strings.Join(m.Users, ", "))
+		ch := c.chanFor(m.Ch)
+		ch.online = append([]string{}, m.Users...)
+		if c.quietWho[ch.name] {
+			delete(c.quietWho, ch.name)
+			c.ui.setBar("")
+			return
+		}
+		c.sysIn(ch, "online: "+strings.Join(m.Users, ", "))
 	case "res", "err":
 		if cb := c.waiting[m.RID]; cb != nil {
 			delete(c.waiting, m.RID)
@@ -1133,6 +1171,9 @@ func (c *client) applyInfo(ci ChanInfo) *chanState {
 	ch := c.ensureChan(ci.Name)
 	ch.topic, ch.role, ch.readonly, ch.expire = ci.Topic, ci.Role, ci.Readonly, ci.Expire
 	ch.e2e = ci.E2E
+	if ci.Members > 0 {
+		ch.members = ci.Members
+	}
 	if ci.Epoch > ch.epoch {
 		ch.epoch = ci.Epoch
 	}
@@ -1324,6 +1365,15 @@ func (c *client) renderMsg(ch *chanState, m Msg) {
 	}
 }
 
+func containsFold(list []string, s string) bool {
+	for _, x := range list {
+		if strings.EqualFold(x, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // ---- formatting -------------------------------------------------------------
 
 func fmtMsg(m Msg, mention bool) string {
@@ -1396,6 +1446,7 @@ func runSend(args []string) {
 		}
 	}
 	cfg, dir, f := parseClientFlags("send", flags)
+	ensureHub(&cfg, dir)
 	c := newClient(cfg, dir)
 	c.bootstrapAuth(f)
 	chName := f.ch

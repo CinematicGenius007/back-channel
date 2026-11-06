@@ -50,13 +50,13 @@ func termSize() (rows, cols int) {
 	return int(info.Window.Bottom-info.Window.Top) + 1, int(info.Window.Right-info.Window.Left) + 1
 }
 
-// notifyResize: Windows has no SIGWINCH; poll the console size every 2s (a
+// notifyResize: Windows has no SIGWINCH; poll the console size twice a second (a
 // single kernel call, no process spawn) and signal only when it changes.
 func notifyResize(ch chan<- os.Signal) {
 	go func() {
 		r, c := termSize()
 		for {
-			time.Sleep(2 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			nr, nc := termSize()
 			if nr != r || nc != c {
 				r, c = nr, nc

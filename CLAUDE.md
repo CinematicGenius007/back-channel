@@ -78,9 +78,22 @@ tone and precision, and deleted a stale `builds/` directory of pre-Phase-2 binar
   in the default channel while `guest_access` is on.
 - **Never hash a password under `h.mu`.** PBKDF2 takes ~0.3 s; `authenticate` and
   `handleCmd` compute hashes before taking the lock.
-- **Cooked-mode TUI.** No raw mode. The only exception is echo-off for password prompts
-  (`stty -echo` / `SetConsoleMode`). Channel switching is via `/n`, `/p`, `/1`…`/9`,
-  `/c NAME` — Alt/Ctrl combos are not reliably visible in cooked mode.
+- **Two TUIs, one client.** The default is the full-screen *app* TUI (`app*.go`): raw
+  mode, mouse/touch (SGR mouse reports), bracketed paste, setup flow, palette, Manage,
+  themes. The original cooked-mode TUI (`tui.go`) stays as the fallback (`-classic`,
+  `BCH_CLASSIC=1`, `"ui":"classic"`, no TTY, or raw mode refused). Both sit behind the
+  `ui` interface in `app.go`; client code calls only that interface, never either TUI
+  directly, and must work with both. Raw mode is entered only in `rawterm_*.go`
+  (termios ioctl on Unix — `TCGETS` on Linux, `TIOCGETA` on the BSDs/macOS — and
+  `ENABLE_VIRTUAL_TERMINAL_INPUT` on Windows 10 1809+) and always restored on exit or panic.
+- **App screens never invent behaviour.** Manage actions, forms, palette entries and `/`
+  suggestions all end in an existing slash command through `handleInput` (the form shows
+  it). The only app-local commands are `/manage`, `/theme`, `/mouse`; the classic TUI
+  answers those with a pointer to the app. New hub features need a slash command first,
+  then optionally a Manage entry in `app_manage.go` and a `catalog.go` line.
+- **No idle work in the app TUI.** It redraws only on input, a hub frame, a resize or the
+  existing 2 s tick, and writes only rows that changed. No animation timers — the client's
+  zero-CPU idle matters more than motion.
 - **`clip`, `keyreq` and `keyshare` frames are never persisted or replayed.** `clip` goes
   only to the same user's other sessions; `keyshare` goes only to the one (user, device)
   it names; `keyreq` broadcasts to a channel's other current subscribers. The hub is a
@@ -135,10 +148,17 @@ tone and precision, and deleted a stale `builds/` directory of pre-Phase-2 binar
 | `client.go` | flags/config, pre-TUI login, connect loop, events, per-channel state (`chanState` carries `e2e`/`epoch`/`pendingEnc` alongside the self-destruct `expire`), `renderMsg` (decrypts when needed, used both live and to flush held-back e2e messages) |
 | `client_cmds.go` | slash commands, password prompts, `/admin …`, `/e2e`/`/verify` dispatch, kick/ban wired to `afterModeration` |
 | `clipboard.go`, `clipboard_windows.go`, `clipboard_other.go` | clipboard sync loop; native Win32 vs pbpaste/xclip |
-| `tui.go`, `term_*.go` | scroll-region TUI with channel bar; size, VT enable, echo toggle |
+| `tui.go`, `term_*.go` | classic cooked-mode TUI with channel bar; size, VT enable, echo toggle |
+| `app.go` | the `ui` interface, app state, input reader (Esc timeout, paste), mouse taps/swipes, `runApp` main loop, app-only commands |
+| `app_main.go` | frame render + row diff, main screen layout (responsive), `/` suggestions, palette, channel picker, help, key handling |
+| `app_manage.go`, `app_setup.go` | Manage sections + forms; first-run setup flow (hub → device → account → look → ready) |
+| `input.go`, `editor.go`, `canvas.go`, `theme.go`, `catalog.go` | escape-sequence parser, line editor, cell canvas (widths, wrapping, SGR, 256-colour fallback), themes, command catalog |
+| `rawterm_*.go` | entering/leaving raw mode per platform |
 | `*_test.go` | permission matrix, end-to-end hub tests, expiry tests, e2e crypto + full hub-relayed key exchange |
 
 ## Ideas the owner has floated but that are not built
 
-Nothing is currently pending. If a new idea comes up mid-session, add it here with
+Nothing is currently pending. (Phase 4, the app TUI, is built: see the "Two TUIs" rule
+above. It was designed on a Claude Design canvas first; the website-theme TUI board there
+is the reference for its look.) If a new idea comes up mid-session, add it here with
 enough context to resume cold, the way this file's Phase 3 entry does.

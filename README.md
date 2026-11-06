@@ -79,7 +79,7 @@ WebGL shader; without WebGL the page shows a static ASCII fallback instead.
 | Storage | One `state.json` (atomic rename) + `messages.jsonl` + `audit.jsonl`. No database. | Stays stdlib-only, cross-compiles in one command, is `grep`-able. Fine for hundreds of users. |
 | Public hub | `bch serve -public`: TLS 1.3 with a self-signed cert, clients **pin the fingerprint** (SSH-style). | No domain or CA needed; a MITM is detected. See PUBLIC-SERVER.md. |
 | Discovery | UDP broadcast `:7779`. | Zero-config on the same LAN. |
-| UI | VT100 scroll-region TUI in cooked mode; channel bar; `/1`…`/9` to switch. | Works in Terminal.app, iTerm, Windows Terminal, conhost, SSH with no terminal library. |
+| UI | Full-screen raw-mode TUI with mouse and touch input, a setup flow, a command list, Manage screens and themes. Falls back to the original line-mode TUI (`-classic`) when the terminal can't do raw mode. | One parser for every OS: Windows 10 1809+ consoles speak the same escape sequences as macOS and Linux terminals. Every screen is a front for an existing slash command, so nothing behaves differently between the two. |
 
 Data layout: `~/backchannel/{config.json, inbox/<channel>/, outbox/, outbox/<channel>/, outbox/sent/}` and on
 the hub machine `~/backchannel/hub/{state.json, messages.jsonl, audit.jsonl, files/, cert.pem, key.pem}`.
@@ -116,10 +116,15 @@ Leave it running (or install it as a service, below).
 
 **2. Connect from the same machine** in a second tab:
 ```sh
-bch -hub 192.168.1.20 -user owner
-password for owner@192.168.1.20: ********
+bch
 ```
-You are in `#general`. Change the password now: `/passwd`.
+The first run opens **setup**: pick the hub (hubs on your network are listed), name this
+device, sign in (`owner` and the password above), pick a theme. You are in `#general`.
+Change the password now: `/passwd`. `bch setup` goes through it again later; the flags
+below still work and skip the steps they answer:
+```sh
+bch -hub 192.168.1.20 -user owner
+```
 
 **3. Connect from the Windows PC** (details in WINDOWS-SETUP.md):
 ```powershell
@@ -160,9 +165,37 @@ Everything about running a hub for other people — roles, bans, limits, setting
 | Leave | `/quit` or Ctrl-C |
 | Everything | `/help` |
 
-The **channel bar** shows unread counts: `1:#general  2:#design(3)  3:#ops`. Files
+The **channel list** on the left shows unread counts and which channels are encrypted. Files
 auto-download (≤ 50 MB, `-auto N` to change) in the channel you are looking at; for a channel
 you want to receive files from in the background, `/watch design`.
+
+### The interface
+
+| Want to | Keyboard | Mouse / touch |
+|---|---|---|
+| Find a command | type `/` — matching commands appear above the input; ↑↓ pick, Tab completes | tap a suggestion |
+| Everything in one list | Ctrl-K, then type to filter | **⌘ Commands** in the bottom bar |
+| Switch channel | Alt+1…9, Ctrl-N / Ctrl-P, Ctrl-O for a list | tap it in the channel list, or **≡** on a narrow window |
+| Read back | PgUp / PgDn; End or Esc returns to the latest | wheel or swipe in the messages |
+| Channels, people, invites, devices, files, look | F2 or `/manage` | **⚙ Manage** |
+| Change the theme | `/theme amber` (`/theme` alone lists them) | Manage → Appearance |
+| Keys | F1 | **? Help** |
+| New line in a message | Alt+Enter | — |
+
+Manage runs the same slash commands you would type and shows the exact command before it
+runs, so it works for every role and the hub checks it like any other command. Password
+prompts (`/passwd`, `/login`) hide what you type.
+
+The layout follows the window: channel list and a "here now" panel on wide windows, the
+channel list alone on medium ones, messages only (with **≡** for channels) on a phone-sized
+terminal. Themes: `site-dark` (default), `site-light`, `phosphor`, `amber`, `telex`,
+`blueprint`, and `terminal`, which uses your terminal's own colours (also the default when
+`NO_COLOR` is set). Colours are 24-bit where the terminal says it supports them, 256 otherwise.
+
+With mouse input on, most terminals select text when you hold **Shift** while dragging;
+`/mouse off` turns mouse handling off entirely. The original line-mode interface is still
+there: `bch -classic`, `BCH_CLASSIC=1`, or `"ui": "classic"` in `config.json`. It is also
+used automatically when stdin isn't a terminal or the console can't do raw mode.
 
 ### Clipboard sync
 

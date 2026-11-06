@@ -20,7 +20,7 @@ type prompt struct {
 
 func (c *client) ask(labels []string, done func([]string)) {
 	c.pending = &prompt{labels: labels, done: done}
-	echoOff()
+	c.ui.secret(true)
 	c.ui.setPrompt(labels[0] + " ")
 }
 
@@ -32,7 +32,7 @@ func (c *client) feedPrompt(line string) {
 		return
 	}
 	c.pending = nil
-	echoOn()
+	c.ui.secret(false)
 	c.ui.setPrompt("> ")
 	p.done(p.answers)
 }
@@ -430,6 +430,8 @@ func (c *client) handleInput(line string) bool {
 			}
 		})
 		c.sys("notifications " + map[bool]string{true: "off", false: "on"}[arg == "off"])
+	case "manage", "theme", "mouse":
+		c.sys("/" + cmd + " is part of the full-screen interface — start bch without -classic")
 	case "clear":
 		if c.active != nil {
 			c.active.lines = nil
@@ -656,7 +658,7 @@ var builtins = map[string]bool{}
 func isBuiltin(cmd string) bool { return builtins[cmd] }
 
 func init() {
-	for _, k := range strings.Fields("q quit exit help h c ch switch go n next p prev channels list ls create join leave delete topic members m who w invite invites revoke add kick ban unban bans mute unmute role transfer del rm purge settings login register passwd sessions logout admin a send s f get g open o watch paste pa copy y clip e2e verify notify clear") {
+	for _, k := range strings.Fields("q quit exit help h c ch switch go n next p prev manage theme mouse channels list ls create join leave delete topic members m who w invite invites revoke add kick ban unban bans mute unmute role transfer del rm purge settings login register passwd sessions logout admin a send s f get g open o watch paste pa copy y clip e2e verify notify clear") {
 		builtins[k] = true
 	}
 }

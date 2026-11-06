@@ -114,4 +114,6 @@ schtasks /delete /tn "backchannel" /f     # remove it later
 | "hub closed the connection before hello" | Hub runs with TLS — use `-hub tls://HOST` |
 | "HUB CERTIFICATE CHANGED" | Either the hub was reinstalled (get the new fingerprint, re-run with `-fingerprint`) or someone is intercepting — ask the operator before trusting it |
 | Password prompt shows what I type | The terminal isn't a real console (e.g. some IDE terminals). Use Windows Terminal or PowerShell |
+| Opens the plain line-mode screen instead of the full-screen one | The console refused virtual-terminal input — Windows older than 10 (1809), or a terminal that isn't a real console. Use Windows Terminal; `bch -classic` keeps the plain screen on purpose |
+| Clicking doesn't do anything | Mouse input needs Windows Terminal (or a recent conhost). The keyboard does everything: Ctrl-K for commands, F2 for Manage |
 | SmartScreen blocks every launch | Right-click `bch.exe` → Properties → check "Unblock" at the bottom → OK |
