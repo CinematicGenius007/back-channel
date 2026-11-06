@@ -39,13 +39,15 @@ type Config struct {
 	E2EKeys map[string]map[string]string `json:"e2e_keys,omitempty"` // channel -> epoch (string) -> key (base64)
 
 	ClipSync bool     `json:"clip_sync,omitempty"` // sync clipboard with my other devices
-	Notify   string   `json:"notify,omitempty"`    // "off" to silence the bell (default on)
+	Notify   string   `json:"notify,omitempty"`    // "" bell, "desktop" bell + system notifications, "off" nothing
 	Active   string   `json:"active,omitempty"`    // last active channel
 	Watch    []string `json:"watch,omitempty"`     // channels that auto-download even when not active
 
 	Theme string `json:"theme,omitempty"` // app TUI colour theme (theme.go)
 	Mouse string `json:"mouse,omitempty"` // "off" disables mouse/touch input in the app TUI
 	UI    string `json:"ui,omitempty"`    // "classic" always uses the line-mode TUI
+
+	Verified map[string]bool `json:"verified,omitempty"` // "user|fingerprint" device keys compared in person
 }
 
 func main() {

@@ -284,7 +284,16 @@ func (c *client) e2eCmd(f []string) {
 
 // verifyCmd shows a member's device fingerprints for out-of-band comparison — the same
 // trust-on-first-use idea as the TLS certificate pin, applied to who holds a channel key.
-func (c *client) verifyCmd(name string) {
+func (c *client) verifyCmd(arg string) {
+	f := strings.Fields(arg)
+	name := ""
+	if len(f) > 0 {
+		name = f[0]
+	}
+	if len(f) >= 2 {
+		c.markVerified(name, f[1], true)
+		return
+	}
 	if name == "" {
 		c.sys("your device fingerprint: " + keyFingerprint(c.snapshot().E2EPub))
 		return
@@ -301,13 +310,61 @@ func (c *client) verifyCmd(name string) {
 		found := false
 		for _, p := range m.Peers {
 			if strings.EqualFold(p.User, name) {
-				c.sys(fmt.Sprintf("%s @ %s: %s", p.User, p.Device, keyFingerprint(p.Pub)))
+				fp := keyFingerprint(p.Pub)
+				mark := ""
+				if c.isVerified(p.User, fp) {
+					mark = "  ✓ verified"
+				}
+				c.sys(fmt.Sprintf("%s @ %s: %s%s", p.User, p.Device, fp, mark))
 				found = true
 			}
 		}
 		if !found {
 			c.sys(name + " has no device online here right now — ask them to open the channel, then try again")
 		}
+	})
+}
+
+func (c *client) unverifyCmd(arg string) {
+	f := strings.Fields(arg)
+	if len(f) < 2 {
+		c.sys("usage: /unverify NAME FINGERPRINT")
+		return
+	}
+	c.markVerified(f[0], f[1], false)
+}
+
+// markVerified records (on this device only) that you compared NAME's fingerprint
+// out of band. Marking needs the device to be online in the current e2e channel, so
+// a typo can't mark a key nobody has; unmarking works for any stored mark.
+func (c *client) markVerified(name, fp string, on bool) {
+	fp = strings.ToLower(fp)
+	if !on {
+		if !c.isVerified(name, fp) {
+			c.sys("no verified mark for " + name + " " + fp)
+			return
+		}
+		c.setVerified(name, fp, false)
+		c.sys("removed the verified mark for " + name + " " + fp)
+		return
+	}
+	if c.active == nil || !c.active.e2e {
+		c.sys("/verify only applies inside an end-to-end encrypted channel")
+		return
+	}
+	c.cmd("e2epeers", nil, func(m Msg) {
+		if !m.OK {
+			c.printRes(m)
+			return
+		}
+		for _, p := range m.Peers {
+			if strings.EqualFold(p.User, name) && keyFingerprint(p.Pub) == fp {
+				c.setVerified(p.User, fp, true)
+				c.sys(fmt.Sprintf("✓ marked %s @ %s (%s) as verified on this device", p.User, p.Device, fp))
+				return
+			}
+		}
+		c.sys("none of " + name + "'s online devices here has fingerprint " + fp + " — check it again")
 	})
 }
 

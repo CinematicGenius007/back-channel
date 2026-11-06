@@ -19,6 +19,7 @@ const (
 	evKey evKind = iota
 	evMouse
 	evPaste
+	evFocus // the terminal window gained or lost focus (mode 1004)
 )
 
 type keyCode int
@@ -76,7 +77,8 @@ type event struct {
 	button int // 0 left, 1 middle, 2 right
 	x, y   int // 0-based cell
 
-	text string // evPaste
+	text  string // evPaste
+	focus bool   // evFocus: true = gained
 }
 
 const (
@@ -217,6 +219,9 @@ func parseCSI(b []byte, final bool) (*event, int, bool) {
 	if strings.HasPrefix(params, "<") && (fin == 'M' || fin == 'm') {
 		return parseSGRMouse(params[1:], fin == 'M'), n, true
 	}
+	if params == "" && (fin == 'I' || fin == 'O') {
+		return &event{kind: evFocus, focus: fin == 'I'}, n, true
+	}
 	parts := strings.Split(params, ";")
 	num := func(i int) int {
 		if i < len(parts) {
@@ -255,7 +260,7 @@ func parseCSI(b []byte, final bool) (*event, int, bool) {
 			return nil, n, true
 		}
 		ev.key = k
-	default: // focus reports, cursor position replies, …: ignore
+	default: // cursor position replies and the like: ignore
 		return nil, n, true
 	}
 	return ev, n, true

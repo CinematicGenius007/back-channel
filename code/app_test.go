@@ -247,6 +247,13 @@ func TestAppRendersEveryScreenAtEverySize(t *testing.T) {
 				check("overlay")
 			}
 			r.a.closeOverlay()
+			r.a.ver = &verifyView{ch: "design", peers: []Peer{{User: "mina", Device: "laptop-with-a-long-name", Pub: r.c.snapshot().E2EPub}}}
+			r.a.ov = ovVerify
+			check("verify")
+			r.a.closeOverlay()
+			r.a.openFind("meeting")
+			check("find")
+			r.a.findOn = false
 			r.a.openForm(newChannelForm())
 			check("form")
 			r.a.closeOverlay()

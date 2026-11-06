@@ -61,6 +61,7 @@ const (
 	ovChannels
 	ovHelp
 	ovForm
+	ovVerify
 )
 
 // hit is a clickable/tappable area registered while drawing a frame.
@@ -123,6 +124,16 @@ type app struct {
 	setup    *setupFlow
 	quit     bool
 	whoAsked map[string]bool
+
+	comp    *completion       // Tab completion cycle (app_extra.go)
+	drafts  map[string]string // channel → unsent input
+	draftCh string            // channel the input line belongs to
+
+	findOn, findJump bool // find bar open; scroll to the current match on next draw
+	findEd           editor
+	findIdx          int // 0 = newest match
+
+	ver *verifyView
 }
 
 func newApp() *app {
@@ -161,7 +172,7 @@ func (a *app) stSel() style {
 func (a *app) init() {
 	enableVT()
 	a.h, a.w = termSize()
-	io.WriteString(a.out, "\x1b[?1049h\x1b[?7l\x1b[?2004h\x1b[?25l")
+	io.WriteString(a.out, "\x1b[?1049h\x1b[?7l\x1b[?2004h\x1b[?1004h\x1b[?25l")
 	a.setMouse(a.mouse)
 	a.dirty = true
 }
@@ -180,7 +191,7 @@ func (a *app) cleanup() {
 		return
 	}
 	a.closed = true
-	io.WriteString(a.out, "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?2004l\x1b[?7h\x1b[0m\x1b[?25h\x1b[?1049l")
+	io.WriteString(a.out, "\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?2004l\x1b[?1004l\x1b[?7h\x1b[0m\x1b[?25h\x1b[?1049l")
 	if a.restore != nil {
 		a.restore()
 	}
@@ -464,6 +475,7 @@ func runApp(cfg Config, dir string, f clientFlags) bool {
 
 // afterTurn keeps presence for the open channel filled in without printing the reply.
 func (a *app) afterTurn() {
+	a.swapDraft()
 	c := a.c
 	if c == nil || c.legacy || !c.online.Load() || c.active == nil || c.active.name == "…" {
 		return
@@ -534,6 +546,13 @@ func (a *app) appCommand(line string) bool {
 		} else {
 			a.c.sys("mouse and touch off — normal text selection works again")
 		}
+	case "/find":
+		a.openFind(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), f[0])))
+	case "/verify":
+		if len(f) > 1 || a.c.active == nil || !a.c.active.e2e {
+			return false // /verify NAME [FINGERPRINT] goes to the client as usual
+		}
+		a.openVerify()
 	case "/help", "/h", "/?":
 		if len(f) == 1 {
 			a.ov, a.help = ovHelp, 0

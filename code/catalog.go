@@ -22,7 +22,7 @@ var catalog = []cmdInfo{
 
 	{"send", "PATH", "send a file (or drag one in and press Enter)", "files"},
 	{"get", "[#id]", "download a file (latest if no id)", "files"},
-	{"open", "", "open this channel's inbox folder", "files"},
+	{"open", "[#id]", "open this channel's inbox folder (or the folder a saved file is in)", "files"},
 	{"watch", "[NAME]", "auto-download files from a channel even when it is not open", "files"},
 
 	{"paste", "", "send your clipboard as a message", "clipboard"},
@@ -30,7 +30,8 @@ var catalog = []cmdInfo{
 	{"clip", "on|off|push|pull", "clipboard sync between your own devices", "clipboard"},
 
 	{"e2e", "status|rotate|reshare", "end-to-end encryption for this channel", "security"},
-	{"verify", "NAME", "compare device fingerprints with someone", "security"},
+	{"verify", "NAME [FINGERPRINT]", "compare device fingerprints; with one, mark it checked", "security"},
+	{"unverify", "NAME FINGERPRINT", "remove a verified mark", "security"},
 	{"sessions", "[revoke ID]", "your signed-in sessions", "security"},
 	{"passwd", "", "change your password", "security"},
 	{"logout", "[all]", "sign out this device (or every device)", "security"},
@@ -57,7 +58,8 @@ var catalog = []cmdInfo{
 	{"manage", "", "open Manage: channels, people, invites, devices, appearance", "app"},
 	{"theme", "[NAME]", "change the colour theme", "app"},
 	{"mouse", "on|off", "mouse and touch input (off allows normal text selection)", "app"},
-	{"notify", "on|off", "the bell for new messages", "app"},
+	{"notify", "on|desktop|off|test", "bell, desktop notifications, or neither", "app"},
+	{"find", "TEXT", "find in this channel (Ctrl-F)", "app"},
 	{"clear", "", "clear this channel's scrollback on screen", "app"},
 	{"help", "", "keys and commands", "app"},
 	{"quit", "", "leave bch", "app"},

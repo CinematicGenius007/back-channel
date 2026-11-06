@@ -54,6 +54,7 @@ type chanState struct {
 	lines             []line
 	online            []string // who is here now (from who/join/part); nil until known
 	members           int
+	authors           map[string]bool // everyone seen posting here (for @name completion)
 }
 
 func (ch *chanState) rendered() []string {
@@ -164,6 +165,9 @@ type client struct {
 	clipMu           sync.Mutex
 	clipLast, clipIn string
 	clipOn           atomic.Bool
+
+	unfocused  atomic.Bool // the terminal window is in the background (app TUI focus reports)
+	lastNotify time.Time   // desktop notification rate limit (event goroutine only)
 }
 
 type clientFlags struct {
@@ -589,8 +593,9 @@ func (c *client) upload(chName, path string) error {
 	if epoch > 0 {
 		target += "&epoch=" + strconv.Itoa(epoch)
 	}
-	c.status(fmt.Sprintf("uploading %s (%s) to #%s…", filepath.Base(path), humanSize(st.Size()), chName))
-	status, _, respBody, conn, err := httpDo(c.dial, c.httpAddr, "PUT", target, c.authHeaders(), reqBody, size)
+	label := "uploading " + filepath.Base(path) + " to #" + chName
+	c.status(progressText(label, 0, size))
+	status, _, respBody, conn, err := httpDo(c.dial, c.httpAddr, "PUT", target, c.authHeaders(), c.progress(reqBody, size, label), size)
 	if err != nil {
 		return err
 	}
@@ -612,6 +617,11 @@ func (c *client) download(m Msg) (string, error) {
 	if status != 200 {
 		return "", fmt.Errorf("hub: status %d", status)
 	}
+	label := "downloading " + m.Name
+	if ch := c.chanByName(m.Ch); ch != nil && ch.e2e {
+		label = fmt.Sprintf("downloading file #%d", m.ID) // m.Name is ciphertext here
+	}
+	body = c.progress(body, m.Size, label)
 	dir := filepath.Join(c.dir, "inbox")
 	if m.Ch != "" && !c.legacy {
 		dir = filepath.Join(dir, sanitizeName(m.Ch))
@@ -1322,6 +1332,13 @@ func (c *client) renderMsg(ch *chanState, m Msg) {
 	}
 	mine := c.isMe(m.From)
 	mention := !mine && c.me != "" && strings.Contains(strings.ToLower(text), "@"+strings.ToLower(c.me))
+	if m.From != "" {
+		if ch.authors == nil {
+			ch.authors = map[string]bool{}
+		}
+		ch.authors[m.From] = true
+	}
+	c.maybeNotify(ch, m, text, mention, mine)
 	var line string
 	if m.T == "msg" {
 		ch.texts[m.ID] = text
@@ -1354,6 +1371,7 @@ func (c *client) renderMsg(ch *chanState, m Msg) {
 	if m.Size <= int64(c.snapshot().AutoMB)<<20 && (ch == c.active || c.watched(ch.name)) {
 		go func() {
 			p, err := c.download(m)
+			c.status("")
 			if err != nil {
 				c.events <- Msg{T: "_sys", Ch: m.Ch, Text: "download failed: " + err.Error()}
 				return
@@ -1396,7 +1414,8 @@ func fmtFile(m Msg) string {
 
 // ---- OS glue ----------------------------------------------------------------
 
-func openFolder(p string) {
+// openFolder is a variable so tests can see what would have been opened.
+var openFolder = func(p string) {
 	os.MkdirAll(p, 0o755)
 	switch runtime.GOOS {
 	case "darwin":

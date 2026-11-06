@@ -151,7 +151,7 @@ Everything about running a hub for other people — roles, bans, limits, setting
 | Send text | type, Enter |
 | Send a file | drag it into the terminal window, Enter — or `/send C:\path\file.png` — or drop it in `~/backchannel/outbox` (→ active channel) or `~/backchannel/outbox/<channel>/` |
 | Fetch a file that didn't auto-download | `/get 13` (or `/get` for the latest in this channel) |
-| Open this channel's inbox folder | `/open` |
+| Open this channel's inbox folder | `/open` · the folder a saved file is in: `/open 13` |
 | Switch channel | `/1` … `/9`, `/n` / `/p`, `/c design`, or just `/design` |
 | List your channels | `/channels` |
 | Join with an invite code | `/join k7Qz-9mPd2` |
@@ -161,6 +161,7 @@ Everything about running a hub for other people — roles, bans, limits, setting
 | Keep clipboards in sync across my devices | `/clip on` on each device (see below) |
 | Mention someone | `@name` — rings their terminal bell even in a background channel |
 | Delete my message | `/del 12` |
+| Desktop notifications | `/notify desktop` (bell plus a system notification; `/notify test` to try it) |
 | Quieter | `/notify off` |
 | Leave | `/quit` or Ctrl-C |
 | Everything | `/help` |
@@ -181,10 +182,26 @@ you want to receive files from in the background, `/watch design`.
 | Change the theme | `/theme amber` (`/theme` alone lists them) | Manage → Appearance |
 | Keys | F1 | **? Help** |
 | New line in a message | Alt+Enter | — |
+| Complete a name or channel | Tab after `@mi`, `/kick s`, `/c de`, `/watch …`; Tab again for the next match | — |
+| Find in this channel | Ctrl-F or `/find TEXT`; Enter/↑ older match, ↓ newer, Esc closes | **⌘ Commands** → Find |
+| Fetch or open a file | `/get 13`, then `/open 13` | tap the file line: downloads it, or opens its folder once saved |
+| Check the devices in an e2e channel | `/verify` with no name | Manage → Security → Verify devices |
 
 Manage runs the same slash commands you would type and shows the exact command before it
 runs, so it works for every role and the hub checks it like any other command. Password
 prompts (`/passwd`, `/login`) hide what you type.
+
+A message you started typing stays with its channel: switch away and back and it is still
+in the input. Uploads and downloads show their progress in the status line.
+
+**Notifications.** `/notify on` (the default) rings the terminal bell for a mention or a
+message in another channel. `/notify desktop` adds a system notification for those, and for
+any message while the terminal window is in the background (the app asks the terminal for
+focus reports; terminals that don't send them are treated as always focused). It uses
+`osascript` on macOS, `notify-send` on Linux (from libnotify) and a Windows PowerShell toast
+on Windows 10/11. In an end-to-end encrypted channel the notification only says that a
+message arrived: notification centres keep a history and show it on the lock screen, so
+the text stays inside bch. At most one notification every 4 seconds.
 
 The layout follows the window: channel list and a "here now" panel on wide windows, the
 channel list alone on medium ones, messages only (with **≡** for channels) on a phone-sized
@@ -229,7 +246,9 @@ The hub only ever sees ciphertext in a channel created this way — not the mess
 the file contents or names, not the key. A newly joined device asks for the key
 automatically and gets it from any other device that's online and already holds it;
 `/e2e status` shows whether yours does. `/e2e rotate` (mod+) issues a new key, which also
-happens automatically after a `/kick` or `/ban` in such a channel. Full design, the key
+happens automatically after a `/kick` or `/ban` in such a channel. `/verify` lists every
+device online in the channel with its key fingerprint; once you have compared one with its
+owner, mark it, and it shows as verified on this device from then on. Full design, the key
 exchange, and what this does and doesn't protect against: **ENCRYPTION.md**.
 
 ### From scripts / other terminals (no TUI)

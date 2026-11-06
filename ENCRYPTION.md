@@ -50,7 +50,17 @@ channel just stays locked for you until someone is.
 /e2e rotate      generate a new key and hand it to everyone online now (mod+)
 /e2e reshare     re-send the *current* key to everyone online (no new epoch)
 /verify NAME     show a member's device fingerprint(s), for comparing out of band
+/verify NAME FP  mark that fingerprint as checked (on this device only)
+/unverify NAME FP  remove the mark
 ```
+In the app TUI, `/verify` with no name (or Manage → Security → Verify devices) opens a
+screen listing this device's fingerprint and every other device online in the channel,
+each marked *verified* or *not verified*; Enter or a tap toggles the mark by running the
+commands above. A mark is stored in this device's `config.json` as user + fingerprint, so
+it follows the key, not the device name: if a colleague's laptop generates a new identity,
+its new fingerprint shows as not verified until you compare it again. Marking checks with
+the hub that one of that person's online devices really has the fingerprint you typed, so
+a typo can't mark a key nobody holds. Marks are never sent to the hub or to other devices.
 `/e2e rotate` runs automatically after `/kick` or `/ban` in an e2e channel, from
 whichever device performed it — see §5.
 

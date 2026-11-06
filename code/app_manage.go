@@ -151,7 +151,7 @@ func (a *app) sections() []section {
 		{label: "Encryption status of #" + actName, desc: "/e2e status", cmd: "/e2e status"},
 		{label: "Rotate this channel's key", desc: "/e2e rotate — after someone leaves", cmd: "/e2e rotate"},
 		{label: "Share the key with devices that lack it", desc: "/e2e reshare", cmd: "/e2e reshare"},
-		{label: "Verify someone's devices…", desc: "/verify NAME — compare fingerprints out of band", form: nameForm("Verify devices", "/verify")},
+		{label: "Verify devices in #" + actName, desc: "fingerprints of everyone here — mark the ones you checked", run: a.openVerify},
 		{label: "Signed-in sessions", desc: "/sessions", cmd: "/sessions"},
 		{label: "Change password", desc: "/passwd — asks on the input line", cmd: "/passwd"},
 		{label: "Sign out this device", desc: "/logout", cmd: "/logout"},
@@ -197,8 +197,11 @@ func (a *app) sections() []section {
 	ap.actions = append(ap.actions,
 		action{label: "Mouse and touch: turn " + onOff(!a.mouse), desc: "/mouse " + onOff(!a.mouse) + " — off allows normal text selection",
 			run: func() { a.applyMouse(!a.mouse) }, stay: true},
-		action{label: "Bell for new messages: turn " + onOff(cfg.Notify == "off"), desc: "/notify " + onOff(cfg.Notify == "off"),
-			cmd: "/notify " + onOff(cfg.Notify == "off"), stay: true},
+		action{label: notifyMark(cfg.Notify, "") + "Notify: bell only", desc: "/notify on", cmd: "/notify on", stay: true},
+		action{label: notifyMark(cfg.Notify, "desktop") + "Notify: bell and desktop notifications",
+			desc: "/notify desktop — when you're elsewhere; e2e text never leaves the app", cmd: "/notify desktop", stay: true},
+		action{label: notifyMark(cfg.Notify, "off") + "Notify: off", desc: "/notify off", cmd: "/notify off", stay: true},
+		action{label: "Send a test notification", desc: "/notify test", cmd: "/notify test", stay: true},
 	)
 	out = append(out, ap)
 

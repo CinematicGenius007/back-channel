@@ -346,6 +346,17 @@ func (c *client) handleInput(line string) bool {
 	case "get", "g":
 		c.get(arg)
 	case "open", "o":
+		if id, err := strconv.ParseInt(strings.TrimPrefix(arg, "#"), 10, 64); err == nil && arg != "" {
+			for _, ch := range c.chans {
+				if p, ok := ch.saved[id]; ok {
+					openFolder(filepath.Dir(p))
+					c.sys("opened the folder holding " + filepath.Base(p))
+					return true
+				}
+			}
+			c.sys(fmt.Sprintf("#%d isn't saved on this device yet — /get %d", id, id))
+			return true
+		}
 		dir := filepath.Join(c.dir, "inbox")
 		if c.active != nil && !c.legacy && c.active.name != "…" {
 			dir = filepath.Join(dir, c.active.name)
@@ -421,16 +432,32 @@ func (c *client) handleInput(line string) bool {
 		c.e2eCmd(f)
 	case "verify":
 		c.verifyCmd(arg)
+	case "unverify":
+		c.unverifyCmd(arg)
 	case "notify":
+		switch arg {
+		case "test":
+			go func() {
+				if err := desktopNotify(appName, "test notification from "+c.snapshot().Name); err != nil {
+					c.events <- Msg{T: "_sys", Text: "desktop notification failed: " + err.Error()}
+				}
+			}()
+			c.sys("sent a test notification")
+			return true
+		case "off", "desktop", "on", "":
+		default:
+			c.sys("usage: /notify on|desktop|off|test")
+			return true
+		}
 		c.update(func(cf *Config) {
-			if arg == "off" {
-				cf.Notify = "off"
-			} else {
+			cf.Notify = arg
+			if arg == "on" {
 				cf.Notify = ""
 			}
 		})
-		c.sys("notifications " + map[bool]string{true: "off", false: "on"}[arg == "off"])
-	case "manage", "theme", "mouse":
+		c.sys(map[string]string{"off": "notifications off", "desktop": "desktop notifications on (bell too)",
+			"on": "bell on, desktop notifications off", "": "bell on, desktop notifications off"}[arg])
+	case "manage", "theme", "mouse", "find":
 		c.sys("/" + cmd + " is part of the full-screen interface — start bch without -classic")
 	case "clear":
 		if c.active != nil {
@@ -593,13 +620,12 @@ func (c *client) get(arg string) {
 		return
 	}
 	go func() {
-		c.status("downloading " + m.Name + "…")
 		p, err := c.download(m)
 		c.status("")
 		if err != nil {
 			c.events <- Msg{T: "_sys", Text: "download failed: " + err.Error()}
 		} else {
-			c.events <- Msg{T: "_sys", Text: "saved " + p}
+			c.events <- Msg{T: "_saved", Ch: m.Ch, ID: m.ID, Text: p}
 		}
 	}()
 }
@@ -658,7 +684,7 @@ var builtins = map[string]bool{}
 func isBuiltin(cmd string) bool { return builtins[cmd] }
 
 func init() {
-	for _, k := range strings.Fields("q quit exit help h c ch switch go n next p prev manage theme mouse channels list ls create join leave delete topic members m who w invite invites revoke add kick ban unban bans mute unmute role transfer del rm purge settings login register passwd sessions logout admin a send s f get g open o watch paste pa copy y clip e2e verify notify clear") {
+	for _, k := range strings.Fields("q quit exit help h c ch switch go n next p prev manage theme mouse channels list ls create join leave delete topic members m who w invite invites revoke add kick ban unban bans mute unmute role transfer del rm purge settings login register passwd sessions logout admin a send s f get g open o watch paste pa copy y clip e2e verify unverify notify clear find") {
 		builtins[k] = true
 	}
 }
@@ -666,10 +692,10 @@ func init() {
 func (c *client) help(topic string) {
 	lines := []string{
 		bold("channels") + "   /1 … /9  /n  /p  /c NAME  (or just /NAME)   /channels   /join CODE   /leave   /who   /members",
-		bold("files") + "      drag a file in + Enter   /send PATH   /get [#id]   /open   /watch [NAME]   (outbox/<channel>/ also works)",
+		bold("files") + "      drag a file in + Enter   /send PATH   /get [#id]   /open [#id]   /watch [NAME]   (outbox/<channel>/ also works)",
 		bold("clipboard") + "  /paste (clipboard → channel)   /copy [#id] (message → clipboard)   /clip on|off|push|pull (sync between my devices)",
-		bold("messages") + "   /del #id   @NAME to mention   /notify on|off   /clear",
-		bold("encryption") + " /create NAME e2e=on   /e2e status|rotate|reshare   /verify NAME (compare device fingerprints) — see ENCRYPTION.md",
+		bold("messages") + "   /del #id   @NAME to mention   /notify on|desktop|off|test   /clear",
+		bold("encryption") + " /create NAME e2e=on   /e2e status|rotate|reshare   /verify NAME [FINGERPRINT] (compare, then mark checked)   /unverify NAME FINGERPRINT — see ENCRYPTION.md",
 		bold("mod+") + "       /topic TEXT   /invite [uses] [hours] [role]   /invites   /revoke CODE   /add NAME   /kick NAME [why]   /ban NAME [days] [why]   /unban NAME   /bans   /mute NAME [min]   /unmute NAME",
 		bold("admin+") + "     /role NAME readonly|member|mod|admin   /settings expire=10m|2h|7d|off readonly=on|off max_file_mb=N   /purge NAME|last N|before #id (owner)   /transfer NAME (owner)   /delete NAME (owner)",
 		bold("account") + "    /login NAME   /register CODE NAME   /passwd   /sessions [revoke ID]   /logout [all]",

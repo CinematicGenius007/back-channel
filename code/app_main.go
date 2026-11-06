@@ -35,6 +35,8 @@ func (a *app) render() {
 			a.drawHelp(cv)
 		case ovForm:
 			cur = a.drawForm(cv)
+		case ovVerify:
+			a.drawVerify(cv)
 		}
 	}
 	var b strings.Builder
@@ -217,9 +219,14 @@ func (a *app) drawMain(cv *canvas) [2]int {
 	}
 	cv.text(1, statusY, a.w-hw-3, clip(a.status, a.w-hw-3), style{fg: a.th.copy, bg: stl.bg, rev: stl.rev})
 
-	cur := a.drawInput(cv, inputY)
+	var cur [2]int
+	if a.findOn {
+		cur = a.drawFind(cv, inputY)
+	} else {
+		cur = a.drawInput(cv, inputY)
+	}
 	a.drawKeybar(cv, barY, a.mainKeybar())
-	if a.ov == ovNone {
+	if a.ov == ovNone && !a.findOn {
 		a.drawSuggestions(cv, inputY)
 	}
 	return cur
@@ -356,17 +363,20 @@ func (a *app) drawInfo(cv *canvas, x, y, w, h int) {
 	}
 }
 
-// msgRows wraps the active channel's scrollback to width w.
-func (a *app) msgRows(w int) [][]run {
+// msgRows wraps the active channel's scrollback to width w. lineOf[i] is the index
+// in ch.lines that row i came from.
+func (a *app) msgRows(w int) (rows [][]run, lineOf []int) {
 	ch := a.c.active
 	if ch == nil {
-		return nil
+		return nil, nil
 	}
-	var rows [][]run
-	for _, l := range ch.lines {
-		rows = append(rows, wrapRuns(ansiRuns(l.text, a.stBase(), a.pal), w, 6)...)
+	for i, l := range ch.lines {
+		for _, r := range wrapRuns(ansiRuns(l.text, a.stBase(), a.pal), w, 6) {
+			rows = append(rows, r)
+			lineOf = append(lineOf, i)
+		}
 	}
-	return rows
+	return rows, lineOf
 }
 
 func (a *app) maxScroll() int {
@@ -404,8 +414,28 @@ func (a *app) drawMessages(cv *canvas, x, y, w, h int) {
 		h -= 2
 	}
 	a.paneX, a.paneY, a.paneW, a.paneRows = x-1, y, w+2, h
-	rows := a.msgRows(w)
+	rows, lineOf := a.msgRows(w)
 	a.msgTotal = len(rows)
+	matches, cur := map[int]bool{}, -1
+	if a.findOn {
+		ms := a.findMatches()
+		for _, li := range ms {
+			matches[li] = true
+		}
+		if len(ms) > 0 {
+			a.findIdx = min(a.findIdx, len(ms)-1)
+			cur = ms[a.findIdx]
+		}
+		if a.findJump && cur >= 0 {
+			for r, li := range lineOf { // centre the first row of the current match
+				if li == cur {
+					a.scroll = len(rows) - r - h/2
+					break
+				}
+			}
+		}
+		a.findJump = false
+	}
 	a.clampScroll()
 	end := len(rows) - a.scroll
 	start := end - h
@@ -414,7 +444,23 @@ func (a *app) drawMessages(cv *canvas, x, y, w, h int) {
 	}
 	off := h - (end - start) // anchor to the bottom
 	for i := start; i < end; i++ {
-		cv.drawRuns(x, y+off+i-start, w, rows[i])
+		ry := y + off + i - start
+		row := rows[i]
+		li := lineOf[i]
+		if matches[li] {
+			row = a.highlight(row, li == cur)
+			if li == cur {
+				cv.put(x-1, ry, '›', a.stSig(), x)
+			}
+		}
+		cv.drawRuns(x, ry, w, row)
+		if ch != nil {
+			if id := ch.lines[li].id; id != 0 {
+				if _, isFile := ch.files[id]; isFile {
+					a.onHit(x, ry, w, 1, func() { a.fileTap(ch, id) })
+				}
+			}
+		}
 	}
 	if a.scroll > 0 {
 		label := "↓ latest"
@@ -542,6 +588,12 @@ func (a *app) pickSuggestion(s cmdInfo, run bool) {
 // ---- keys ---------------------------------------------------------------------------------
 
 func (a *app) handle(ev event) {
+	if ev.kind == evFocus { // nothing to redraw; only decides whether to notify
+		if a.c != nil {
+			a.c.unfocused.Store(!ev.focus)
+		}
+		return
+	}
 	a.dirty = true
 	if ev.kind == evMouse {
 		if a.mouse {
@@ -555,6 +607,8 @@ func (a *app) handle(ev event) {
 			switch {
 			case a.ov != ovNone:
 				a.closeOverlay()
+			case a.findOn && a.mode == scrMain:
+				a.findOn = false
 			case a.mode == scrManage:
 				a.mode = scrMain
 			case !a.in.empty():
@@ -569,7 +623,7 @@ func (a *app) handle(ev event) {
 			}
 			return
 		case 'd':
-			if a.in.empty() && a.ov == ovNone {
+			if a.in.empty() && a.ov == ovNone && !a.findOn {
 				a.quit = true
 				return
 			}
@@ -608,6 +662,13 @@ func (a *app) handle(ev event) {
 	case ovForm:
 		a.formKey(ev)
 		return
+	case ovVerify:
+		a.verifyKey(ev)
+		return
+	}
+	if a.mode == scrMain && a.findOn && a.c != nil {
+		a.findKey(ev)
+		return
 	}
 	switch a.mode {
 	case scrSetup:
@@ -632,6 +693,9 @@ func (a *app) mainKey(ev event) {
 	}
 	sug := a.suggestions()
 	before := a.in.String()
+	if ev.key != keyTab {
+		a.comp = nil
+	}
 	switch {
 	case ev.key == keyEnter && ev.alt:
 		a.in.insert("\n")
@@ -646,14 +710,8 @@ func (a *app) mainKey(ev event) {
 	case ev.key == keyTab:
 		if len(sug) > 0 {
 			a.pickSuggestion(sug[a.sugSel], false)
-		} else if s := a.in.String(); strings.HasPrefix(s, "/c ") || strings.HasPrefix(s, "/go ") {
-			pre := strings.ToLower(strings.TrimSpace(s[strings.Index(s, " ")+1:]))
-			for _, ch := range c.chans {
-				if strings.HasPrefix(ch.name, pre) && ch.name != "…" {
-					a.in.set(s[:strings.Index(s, " ")+1] + ch.name)
-					break
-				}
-			}
+		} else if !a.complete() {
+			a.c.ui.bell()
 		}
 	case ev.key == keyUp:
 		if len(sug) > 0 {
@@ -711,6 +769,8 @@ func (a *app) mainKey(ev event) {
 		c.cycle(-1)
 	case ev.key == keyRune && ev.ctrl && ev.r == 'o':
 		a.ov, a.psel = ovChannels, a.activeIndex()
+	case ev.key == keyRune && ev.ctrl && ev.r == 'f':
+		a.openFind("")
 	default:
 		a.in.key(ev)
 	}
@@ -810,6 +870,8 @@ func (a *app) paletteItems() []paletteItem {
 		paletteItem{label: "Join with an invite code", hint: "/join", run: func() { a.openForm(joinForm()) }},
 		paletteItem{label: "Invite someone to #" + c.activeName(), hint: "/invite", run: func() { a.openForm(inviteForm()) }},
 		paletteItem{label: "Send a file", hint: "/send", run: func() { a.openForm(sendForm()) }},
+		paletteItem{label: "Find in #" + c.activeName(), hint: "Ctrl-F", run: func() { a.openFind("") }},
+		paletteItem{label: "Verify devices in #" + c.activeName(), hint: "/verify", run: a.openVerify},
 	)
 	for _, t := range themes {
 		t := t
@@ -822,7 +884,7 @@ func (a *app) paletteItems() []paletteItem {
 	}
 	for _, ci := range catalog {
 		ci := ci
-		if ci.group == "app" && (ci.name == "manage" || ci.name == "theme" || ci.name == "mouse") {
+		if ci.group == "app" && (ci.name == "manage" || ci.name == "theme" || ci.name == "mouse" || ci.name == "find") {
 			continue
 		}
 		items = append(items, paletteItem{label: "/" + ci.name + " " + ci.args, hint: ci.desc, run: func() {
@@ -987,17 +1049,22 @@ var helpLines = []string{
 	"/                  start a command; ↑↓ pick one, Tab completes",
 	"Ctrl-K             command list (type to filter)",
 	"Ctrl-O             switch channel",
+	"Ctrl-F             find in this channel; Enter/↑ older, ↓ newer, Esc",
+	"Tab                complete @names, people after /kick /ban /mute …,",
+	"                   channels after /c /watch; Tab again for the next",
 	"Alt+1 … Alt+9      jump to channel 1–9 (or /1 … /9)",
 	"Ctrl-N / Ctrl-P    next / previous channel",
 	"PgUp / PgDn        scroll messages; End or Esc back to the latest",
 	"↑ / ↓              previous / next thing you typed",
 	"F2                 Manage: channels, people, invites, devices, look",
+	"                   (an unsent message stays with its channel)",
 	"Ctrl-W Ctrl-U      delete word / delete to start of line",
 	"Ctrl-L             redraw the screen",
 	"Ctrl-C             clear the input, close a panel, or quit",
 	"",
 	"MOUSE AND TOUCH",
 	"tap                channels, buttons, list rows, the bottom bar",
+	"tap a file line    download it; once saved, open its folder",
 	"swipe / wheel      scroll messages and lists",
 	"Shift+drag         select text (most terminals); /mouse off turns",
 	"                   mouse handling off entirely",
