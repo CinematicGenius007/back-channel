@@ -224,7 +224,7 @@ Every moderation/administration action is one frame type:
 | `role` | `ch`, `from`, `role`, `by` | role change |
 | `topic` | `ch`, `from`, `text` | |
 | `settings` | `ch`, `by`, `channels[0]` (`topic`, `readonly`, `expire`) | channel settings changed |
-| `invited` | `ch`, `by`?, `channels[0]` | you were added to a channel — `sub` to it |
+| `invited` | `ch`, `by`?, `channels[0]` | you were added to a channel, or created or joined one on another of your devices — `sub` to it. `by` is absent for the last two |
 | `removed` | `ch`, `text`, `by`? | channel deleted, or you left from another device |
 | `read` | `ch`, `id` | your other device read up to here |
 | `clip` | `from`, `text` | clipboard from your other device |

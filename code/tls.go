@@ -56,7 +56,7 @@ func generateCert(certPath, keyPath string) error {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "dropchan hub"},
+		Subject:      pkix.Name{CommonName: "backchannel hub"},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().AddDate(20, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,

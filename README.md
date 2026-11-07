@@ -41,24 +41,150 @@ and optional end-to-end encryption.
 | [WINDOWS-SETUP.md](WINDOWS-SETUP.md) | step-by-step Windows client install |
 | [PHASE2-DESIGN.md](PHASE2-DESIGN.md) | the design spec and the reasoning behind it |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | code, tests, docs, and pull-request expectations |
+| [LICENSE](LICENSE) | the terms (MIT) |
 | [AGENTS.md](AGENTS.md) | concise instructions for coding agents working in this repository |
 
-The public site lives in `site/`. It is a static Astro build with no runtime backend:
+The public site lives in `site/`; see [CONTRIBUTING.md](CONTRIBUTING.md#the-site) to build it.
 
-```sh
-cd site
-pnpm install
-pnpm dev          # local preview
-pnpm build        # writes site/dist/
+## Architecture
+
+backchannel is a star: one **hub** process owns all state, and every **client** keeps one
+persistent connection to it. Clients never talk to each other. Everything below is one
+Go package built from the standard library.
+
+### What runs where
+
+```mermaid
+flowchart LR
+    subgraph devices["Your devices"]
+        mac["bch client<br/>Mac"]
+        win["bch client<br/>Windows PC"]
+        ph["bch client<br/>phone terminal"]
+    end
+    subgraph hubbox["Hub machine: bch serve"]
+        chat["chat :7777<br/>JSON lines over TCP"]
+        files["files :7778<br/>HTTP/1.1"]
+        disc["discovery :7779<br/>UDP broadcast"]
+        core["hub core<br/>sessions, permissions,<br/>limits, fan-out"]
+        disk[("state.json<br/>messages.jsonl<br/>audit.jsonl<br/>files/")]
+    end
+    mac <-->|"frames"| chat
+    win <-->|"frames"| chat
+    ph <-->|"frames"| chat
+    win -->|"PUT /up, GET /f/id"| files
+    mac -.->|"who is on my LAN?"| disc
+    chat --- core
+    files --- core
+    core --- disk
 ```
 
-For Cloudflare, set the project root to `site`, the build command to `pnpm build`,
-and the deploy command to `pnpm run deploy`. The checked-in `site/wrangler.jsonc` configures
-a Worker with static assets from `dist`; the Worker serves those assets directly, so this
-uses `wrangler deploy` rather than the separate Pages direct-upload command.
+Chat frames and file bytes use separate ports so a large upload never delays a message.
+Both ports check the same session token against the same account table.
 
-The whole site is one file, `site/src/pages/index.astro`. Its ASCII figures are drawn by a
-WebGL shader; without WebGL the page shows a static ASCII fallback instead.
+### Inside the hub
+
+Every frame, from any connection, takes the same path:
+
+```mermaid
+flowchart TD
+    conn["TCP connection"] --> hello["hello: authenticate<br/>password, session token, invite, or v1 guest"]
+    hello --> sess["session<br/>(user, device, subscriptions)"]
+    sess --> frame["frame: msg, sub, cmd, clip, keyreq, keyshare"]
+    frame --> perm{"can() / canTarget() / canSend()<br/>perms.go"}
+    perm -->|"no"| deny["error frame<br/>(unknown channel and non-member<br/>look identical)"]
+    perm -->|"yes"| lim{"limits.go<br/>rate, quota, size, auto-mute"}
+    lim -->|"over"| deny2["error frame"]
+    lim -->|"ok"| act["handler<br/>hub.go, cmds.go, files.go"]
+    act --> log[("append to messages.jsonl<br/>state.json via atomic rename")]
+    act --> fan["fan out to the channel's<br/>subscribed sessions"]
+```
+
+Three frame types skip the log: `clip` goes only to the sender's other sessions,
+`keyshare` only to the one device it names, `keyreq` only to the channel's current
+subscribers. The hub decides *whether* to relay them (membership) and never reads the
+payload.
+
+### A message and a file
+
+```mermaid
+sequenceDiagram
+    participant A as Client A (Mac)
+    participant H as Hub
+    participant B as Client B (Windows)
+    A->>H: msg {ch: design, text}
+    H->>H: check role, rate limit
+    H->>H: assign id, append to log
+    H-->>A: msg {id 12}
+    H-->>B: msg {id 12}
+    A->>H: PUT /up?ch=design (file bytes)
+    H->>H: stream to disk, sha256, quota check
+    H->>H: dedup: same hash, same file on disk
+    H-->>A: file {id 13}
+    H-->>B: file {id 13, name, size}
+    B->>H: GET /f/13 (membership checked)
+    H-->>B: file bytes, saved to inbox/design/
+```
+
+A reconnecting client sends `sub` with the last message id it saw, and the hub replays
+exactly the gap, including deletions as tombstones.
+
+### How end-to-end channels exchange a key
+
+In a channel created with `e2e=on` the hub relays ciphertext and wrapped keys. It never
+has the channel key. The full threat model is in [ENCRYPTION.md](ENCRYPTION.md).
+
+```mermaid
+sequenceDiagram
+    participant N as New device
+    participant H as Hub (dumb relay)
+    participant K as Device that has the key
+    N->>H: sub #incident
+    N->>H: keyreq {ch, epoch}
+    H-->>K: keyreq + N's registered public key (current subscribers only)
+    K->>K: ECDH(my private, N's public) gives a wrapping key
+    K->>K: wrap the AES-256 channel key
+    K->>H: keyshare {to: N, wrapped key}
+    H-->>N: keyshare (only to N, never stored)
+    N->>N: unwrap, store key
+    N->>H: msg {ciphertext, epoch}
+    H-->>K: msg {ciphertext, epoch}
+    Note over H: sees who talks to whom and when,<br/>never plaintext or the key
+```
+
+### Inside the client
+
+```mermaid
+flowchart TD
+    net["connect loop<br/>reconnect with backoff, replay"] --> ev["event queue"]
+    ev --> core["client core<br/>per-channel state, e2e keys,<br/>decrypt, notifications, transfers"]
+    core --> ui{{"ui interface (app.go)"}}
+    ui --> app["app TUI<br/>raw mode, mouse and touch,<br/>setup, Manage, themes"]
+    ui --> classic["classic TUI<br/>line mode fallback"]
+    in["keyboard, mouse, paste"] --> app
+    in --> classic
+    app --> cmd["handleInput: slash commands"]
+    classic --> cmd
+    cmd --> net
+    clip["clipboard sync"] --> core
+    out["outbox folder watcher"] --> core
+```
+
+Both interfaces sit behind one `ui` interface, so the client core never knows which one
+it is driving. Every screen in the app TUI (Manage, the command list, forms) ends in an
+ordinary slash command, so the hub checks the same permissions whichever way you got there.
+
+### Where the code is
+
+| Area | Files |
+|---|---|
+| Wire types | `proto.go` |
+| Hub | `hub.go`, `cmds.go`, `files.go`, `perms.go`, `limits.go`, `store.go`, `auth.go`, `tls.go`, `http_min.go`, `discovery.go` |
+| Client | `client.go`, `client_cmds.go`, `clipboard*.go`, `notify*.go`, `e2e_client.go` |
+| Encryption primitives | `e2e.go` |
+| App TUI | `app*.go`, `input.go`, `editor.go`, `canvas.go`, `theme.go`, `catalog.go`, `rawterm_*.go` |
+| Classic TUI | `tui.go`, `term_*.go` |
+
+`CLAUDE.md` has the per-file description and the rules that keep these parts honest.
 
 ## Design in one table
 
@@ -340,3 +466,7 @@ Message latency on a LAN is one TCP round-trip; files move at whatever the link 
   what someone copied elsewhere or a file they moved out of the inbox.
 - History replays the last 2000 messages per channel (`-history N`). Files without any
   referencing message are removed by `/admin prune`.
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Ayush Saini.

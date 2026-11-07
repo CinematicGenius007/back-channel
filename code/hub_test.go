@@ -744,3 +744,24 @@ func TestPasswordHashing(t *testing.T) {
 		t.Fatal(h)
 	}
 }
+
+// A channel created on one device is announced to the same account's other devices.
+func TestCreateIsPushedToOtherDevices(t *testing.T) {
+	th := startHub(t)
+	pc := th.dial(t)
+	pc.login("owner", th.pass)
+	phone := th.dial(t)
+	phone.login("owner", th.pass)
+
+	res := mustOK(t, pc.cmd("create", "", map[string]string{"name": "fresh"}))
+	if len(res.Channels) != 1 || res.Channels[0].Name != "fresh" {
+		t.Fatalf("create reply: %+v", res)
+	}
+	m := phone.recvT("invited")
+	if m.Ch != "fresh" || len(m.Channels) != 1 || m.Channels[0].Name != "fresh" {
+		t.Fatalf("other device was told: %+v", m)
+	}
+	if m.By != "" {
+		t.Fatalf("self-created channel should carry no 'added by': %+v", m)
+	}
+}

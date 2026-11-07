@@ -150,8 +150,11 @@ func (h *hub) handleCmd(s *session, m Msg) Msg {
 		}
 		h.audit(s.user, "create", "", ch, fmt.Sprintf("expire=%s e2e=%v", fmtExpire(ch.ExpireSec), ch.E2E))
 		h.save()
+		info := h.chanInfoFor(s.user, ch)
+		// the creator's other connected devices learn about it now, not at next login
+		h.toUser(s.user.ID, Msg{T: "invited", Ch: ch.Name, Channels: []ChanInfo{info}}, s)
 		return Msg{T: "res", RID: m.RID, OK: true, Text: "created #" + cn + " — you are its owner. /invite to bring people in.",
-			Channels: []ChanInfo{h.chanInfoFor(s.user, ch)}}
+			Channels: []ChanInfo{info}}
 
 	case "delete":
 		ch, _, e := chCtx(actDelete)

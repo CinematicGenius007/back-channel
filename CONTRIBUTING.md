@@ -64,3 +64,26 @@ does not provide.
 Include what changed, why, tests run, and any compatibility or migration impact. Do not
 include passwords, session tokens, private keys, hub data directories, or generated
 binaries in a patch.
+
+## The site
+
+The public site lives in `site/`. It is a static Astro build with no runtime backend:
+
+```sh
+cd site
+pnpm install
+pnpm dev          # local preview
+pnpm build        # writes site/dist/
+```
+
+For Cloudflare, set the project root to `site`, the build command to `pnpm build`,
+and the deploy command to `pnpm run deploy`. The checked-in `site/wrangler.jsonc` configures
+a Worker with static assets from `dist`; the Worker serves those assets directly, so this
+uses `wrangler deploy` rather than the separate Pages direct-upload command.
+
+The whole site is one file, `site/src/pages/index.astro`. Its ASCII figures are drawn by a
+WebGL shader; without WebGL the page shows a static ASCII fallback instead.
+
+## License
+
+By contributing you agree that your work is released under the [MIT License](LICENSE).
