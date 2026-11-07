@@ -89,11 +89,40 @@ const roadmap = [
   ['NOT PLANNED', 'Dependencies, browser client, retroactive e2e', 'Standard library only, a terminal tool you host yourself, and e2e chosen when a channel is created.'],
 ];
 
+const install = [
+  ['build', '$ git clone https://github.com/cinematicgenius007/back-channel && cd back-channel/code', 'Needs Go 1.24 or newer. Nothing else: the code uses only the standard library.'],
+  ['compile', '$ go build -o bch .', 'One static binary of about 6 MB. ./build.sh makes all six macOS, Windows, and Linux targets in dist/.'],
+  ['run the hub', '$ bch serve', 'Prints the owner password once. Add -public for TLS with a pinned fingerprint.'],
+  ['connect', '$ bch -hub 192.168.1.20 -user owner', 'The first run opens a setup flow. After that, just bch.'],
+];
+
+const keeps = [
+  ['accounts, channels, bans, invites', 'hub: state.json', 'Passwords are stored as PBKDF2-SHA256 hashes (600,000 rounds). Clients keep a revocable session token, never the password.'],
+  ['messages', 'hub: messages.jsonl', 'The last 2,000 per channel replay on reconnect. In an e2e channel the hub holds ciphertext. Self-destruct channels are swept every 15 seconds.'],
+  ['files', 'hub: files/', 'Identical files are stored once, by sha256. In an e2e channel the contents and names are ciphertext.'],
+  ['audit trail', 'hub: audit.jsonl', 'Moderation and admin actions: who did what, to whom, and when.'],
+  ['session, device key, verified marks', 'client: config.json', 'A device’s e2e private key is created on that device and stays there.'],
+];
+
+const faq = [
+  ['Who is this for?', 'Your own machines first, such as a Mac and a work PC, and then a small group you trust. It is built around one hub you run yourself, not a service for strangers.'],
+  ['Can the person running the hub read my messages?', 'In an ordinary channel, yes. They can read content and the files. In a channel created with e2e=on, no: the hub relays ciphertext and never holds the key. In both cases the hub still sees who is in a channel, who is online, and when messages and files move. ENCRYPTION.md lists what e2e does not cover.'],
+  ['Where do I download it?', 'There are no prebuilt downloads yet. Build it from source with Go 1.24 or newer; see Install. Tagged release binaries are on the roadmap with no date.'],
+  ['What does it run on?', 'macOS, Linux, and Windows 10 1809 or newer, on arm64 and amd64. The interface needs a terminal that can enter raw mode. If yours cannot, it falls back to a line-mode interface.'],
+  ['Does it work across the internet?', 'Yes. The hub needs to be reachable from both machines. Tailscale or a similar overlay is the simplest for your own devices. For a group, run bch serve -public on a small VPS: TLS 1.3 with a certificate fingerprint that clients pin, like SSH host keys.'],
+  ['What happens to my clipboard?', 'Nothing, until you run /clip on on a device. Then it goes only to your other devices, is never stored by the hub, and is never replayed.'],
+  ['Is there a web or phone app?', 'No. It is a terminal program. The interface accepts mouse and touch input, so it works in a terminal app on a phone.'],
+  ['I lost the owner password.', 'Run bch serve -reset-owner on the hub machine. It prints a new one.'],
+  ['Can I script it?', 'Yes. bch send "text" or a file works from any shell, and PROTOCOL.md documents the JSON frames and the HTTP file API for anything else.'],
+  ['What does it cost, and under what license?', 'Nothing. It is MIT licensed.'],
+];
+
 const docs = [
   ['README.md', 'install, connect two machines', blob('README.md')],
   ['WINDOWS-SETUP.md', 'step-by-step Windows client', blob('WINDOWS-SETUP.md')],
   ['PUBLIC-SERVER.md', 'TLS, pinning, VPS, firewall', blob('PUBLIC-SERVER.md')],
   ['ENCRYPTION.md', 'what e2e protects, and what not', blob('ENCRYPTION.md')],
+  ['LICENSE', 'MIT', blob('LICENSE')],
   ['ROADMAP.md', 'what is next, what is not planned', blob('ROADMAP.md')],
   ['CONTRIBUTING.md', 'checks, tests, pull requests', blob('CONTRIBUTING.md')],
 ];
@@ -130,6 +159,8 @@ const docs = [
         <a class="brand" href="#top" aria-label="backchannel, top of page"><strong>BACKCHANNEL</strong><span>OPEN SOURCE RELAY</span></a>
         <nav aria-label="Primary">
           <a href="#how">HOW IT WORKS</a>
+          <a href="#install">INSTALL</a>
+          <a href="#faq">FAQ</a>
           <a href="#roadmap">ROADMAP</a>
           <a href="#docs">DOCS</a>
           <a href={repo}>GITHUB ↗</a>
@@ -237,12 +268,34 @@ connected · ayush@hub · #design (owner)</pre>
         </div>
       </section>
 
-      <section class="row section" aria-labelledby="boundary-title">
+      <section class="row section" id="install" aria-labelledby="install-title">
         <span class="rail rail-mark" aria-hidden="true">§04</span>
         <div class="body">
           <div class="section-head">
+            <h2 id="install-title">Install</h2>
+            <p class="label">[04] BUILD FROM SOURCE</p>
+          </div>
+          <ol class="table boundary" aria-label="Install steps">
+            <li class="th" aria-hidden="true"><span>STEP</span><span>COMMAND</span><span>NOTE</span></li>
+            {install.map(([step, command, note]) => (
+              <li class="tr">
+                <strong>{step}</strong>
+                <code>{command}</code>
+                <span>{note}</span>
+              </li>
+            ))}
+          </ol>
+          <p class="notice"><mark>PLANNED</mark> Prebuilt release binaries for macOS, Windows, and Linux. Not available yet and not dated. Details in <a href={blob('ROADMAP.md')}>ROADMAP.md ↗</a></p>
+          <p class="footnote">Step by step for Windows in <a href={blob('WINDOWS-SETUP.md')}>WINDOWS-SETUP.md ↗</a>. Running a hub for other people: <a href={blob('ADMIN-GUIDE.md')}>ADMIN-GUIDE.md ↗</a></p>
+        </div>
+      </section>
+
+      <section class="row section" aria-labelledby="boundary-title">
+        <span class="rail rail-mark" aria-hidden="true">§05</span>
+        <div class="body">
+          <div class="section-head">
             <h2 id="boundary-title">Security boundary</h2>
-            <p class="label">[04] WHO CAN READ WHAT</p>
+            <p class="label">[05] WHO CAN READ WHAT</p>
           </div>
           <div class="table boundary" role="table" aria-label="Who can read channel content">
             <div class="th" role="row"><span role="columnheader">CHANNEL</span><span role="columnheader">HUB OPERATOR READS CONTENT</span><span role="columnheader">WHAT PROTECTS IT</span></div>
@@ -258,12 +311,33 @@ connected · ayush@hub · #design (owner)</pre>
         </div>
       </section>
 
+      <section class="row section" id="data" aria-labelledby="data-title">
+        <span class="rail rail-mark" aria-hidden="true">§06</span>
+        <div class="body">
+          <div class="section-head">
+            <h2 id="data-title">What gets stored</h2>
+            <p class="label">[06] NO DATABASE, PLAIN FILES</p>
+          </div>
+          <div class="table boundary" role="table" aria-label="What the hub and client store">
+            <div class="th" role="row"><span role="columnheader">WHAT</span><span role="columnheader">WHERE</span><span role="columnheader">NOTES</span></div>
+            {keeps.map(([what, where, note]) => (
+              <div class="tr" role="row">
+                <strong role="rowheader">{what}</strong>
+                <code role="cell">{where}</code>
+                <span role="cell">{note}</span>
+              </div>
+            ))}
+          </div>
+          <p class="footnote">Back it up by copying the directory. Layout and limits in <a href={blob('ADMIN-GUIDE.md')}>ADMIN-GUIDE.md ↗</a></p>
+        </div>
+      </section>
+
       <section class="row section" id="roadmap" aria-labelledby="roadmap-title">
-        <span class="rail rail-mark" aria-hidden="true">§05</span>
+        <span class="rail rail-mark" aria-hidden="true">§07</span>
         <div class="body">
           <div class="section-head">
             <h2 id="roadmap-title">Roadmap</h2>
-            <p class="label">[05] NO DATES, NO PROMISES</p>
+            <p class="label">[07] NO DATES, NO PROMISES</p>
           </div>
           <div class="table boundary" role="table" aria-label="Project roadmap">
             <div class="th" role="row"><span role="columnheader">STATUS</span><span role="columnheader">ITEM</span><span role="columnheader">DETAIL</span></div>
@@ -279,11 +353,31 @@ connected · ayush@hub · #design (owner)</pre>
         </div>
       </section>
 
-      <section class="row section section-last" id="docs" aria-labelledby="docs-title">
-        <span class="rail rail-mark" aria-hidden="true">§06</span>
+      <section class="row section" id="faq" aria-labelledby="faq-title">
+        <span class="rail rail-mark" aria-hidden="true">§08</span>
         <div class="body split">
           <div class="split-intro">
-            <p class="label">[06] START / CONTRIBUTE</p>
+            <p class="label">[08] QUESTIONS</p>
+            <h2 id="faq-title">Asked<br />often</h2>
+            <p>Something missing? Open an issue and it goes here.</p>
+            <a class="btn btn-line" href={`${repo}/issues`}>&gt; OPEN AN ISSUE ↗</a>
+          </div>
+          <div class="faq">
+            {faq.map(([q, a]) => (
+              <details>
+                <summary>{q}</summary>
+                <p>{a}</p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section class="row section section-last" id="docs" aria-labelledby="docs-title">
+        <span class="rail rail-mark" aria-hidden="true">§09</span>
+        <div class="body split">
+          <div class="split-intro">
+            <p class="label">[09] START / CONTRIBUTE</p>
             <h2 id="docs-title">Run it.<br />Read it.<br />Change it.</h2>
             <p>The code and docs live on GitHub under cinematicgenius007. Issues, documentation fixes, and pull requests are welcome.</p>
             <a class="btn btn-signal" href={repo}>&gt; OPEN ON GITHUB ↗</a>
@@ -305,6 +399,13 @@ connected · ayush@hub · #design (owner)</pre>
       <span>BACKCHANNEL / BCH</span>
       <span>© CINEMATICGENIUS007</span>
     </footer>
+    <div class="colophon">
+      <p>Colophon. The program is Go, standard library only, MIT licensed. This page is a static Astro build with no analytics or trackers; its one third-party request is the JetBrains Mono font from Google Fonts.</p>
+      <nav aria-label="Footer">
+        <span>READ</span><a href={blob('README.md')}>README</a><a href={blob('PROTOCOL.md')}>PROTOCOL</a><a href={blob('ENCRYPTION.md')}>ENCRYPTION</a>
+        <span>SOURCE</span><a href={repo}>GITHUB</a><a href={blob('LICENSE')}>LICENSE</a><a href={`${repo}/issues`}>ISSUES</a>
+      </nav>
+    </div>
 
     <script is:inline>
       (() => {
@@ -716,6 +817,21 @@ connected · ayush@hub · #design (owner)</pre>
   .docs .tr span:nth-child(2) { color: var(--copy); }
   .docs .tr:hover, .docs .tr:hover span { color: var(--signal-text); }
 
+  .notice { margin-top: 24px; color: var(--copy); font-size: 14px; line-height: 24px; }
+  .boundary code { overflow-wrap: anywhere; }
+  .faq { border-top: 1px solid var(--rule); }
+  .faq details { border-bottom: 1px dashed var(--dash); }
+  .faq summary { cursor: pointer; list-style: none; padding: 20px 0; font-weight: 700; font-size: 15px; line-height: 24px; display: flex; justify-content: space-between; gap: 24px; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: '+'; color: var(--muted); }
+  .faq details[open] summary::after { content: '\2212'; }
+  .faq summary:hover { color: var(--signal-text); }
+  .faq details p { color: var(--copy); font-size: 14px; line-height: 24px; max-width: 640px; padding: 0 0 22px; }
+  .colophon { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px 48px; padding: 20px var(--pad) 40px; color: var(--muted); font-size: 11px; line-height: 18px; letter-spacing: .06em; }
+  .colophon p { max-width: 560px; }
+  .colophon nav { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; }
+  .colophon nav span { letter-spacing: .1em; }
+  .colophon a:hover { color: var(--signal-text); }
   .footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding: 20px var(--pad); border-top: 1px solid var(--rule); color: var(--muted); font-size: 11px; letter-spacing: .1em; }
 
   @media (max-width: 1180px) {
