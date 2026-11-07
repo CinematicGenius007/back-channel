@@ -41,10 +41,11 @@ and optional end-to-end encryption.
 | [WINDOWS-SETUP.md](WINDOWS-SETUP.md) | step-by-step Windows client install |
 | [PHASE2-DESIGN.md](PHASE2-DESIGN.md) | the design spec and the reasoning behind it |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | code, tests, docs, and pull-request expectations |
+| [ROADMAP.md](ROADMAP.md) | what is built, what is next, what is not planned |
 | [LICENSE](LICENSE) | the terms (MIT) |
 | [AGENTS.md](AGENTS.md) | concise instructions for coding agents working in this repository |
 
-The public site lives in `site/`; see [CONTRIBUTING.md](CONTRIBUTING.md#the-site) to build it.
+The public site is [backchannel.cinematicgenius007.com](https://backchannel.cinematicgenius007.com/). Its source lives in `site/`; see [CONTRIBUTING.md](CONTRIBUTING.md#the-site) to build it.
 
 ## Architecture
 

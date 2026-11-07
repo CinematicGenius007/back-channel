@@ -79,11 +79,22 @@ const transmissionArt = (cols: number, rows: number, time: number) => {
 };
 const transmission = transmissionArt(200, 46, 0);
 
+// Mirrors ROADMAP.md at the repository root. Keep the two in step.
+const roadmap = [
+  ['SHIPPED', 'Hub, e2e channels, app TUI', 'Channels, accounts, roles, files, clipboard sync, end-to-end encrypted channels with device verification, and a full-screen terminal app with touch input.'],
+  ['NEXT', 'Tagged release binaries', 'A workflow that builds the six macOS, Windows, and Linux targets on a version tag and attaches them to a GitHub release.'],
+  ['NEXT', 'Check macOS and Linux by hand', 'Raw mode, focus reports, and notifications are tested by cross-compiling, but have only been run on Windows.'],
+  ['CONSIDERED', 'Edit and reply', 'Needs message references in frames and a rule for history, including in e2e channels.'],
+  ['CONSIDERED', 'Typing indicators, image previews', 'Typing adds idle traffic. Previews depend on terminal graphics support.'],
+  ['NOT PLANNED', 'Dependencies, browser client, retroactive e2e', 'Standard library only, a terminal tool you host yourself, and e2e chosen when a channel is created.'],
+];
+
 const docs = [
   ['README.md', 'install, connect two machines', blob('README.md')],
   ['WINDOWS-SETUP.md', 'step-by-step Windows client', blob('WINDOWS-SETUP.md')],
   ['PUBLIC-SERVER.md', 'TLS, pinning, VPS, firewall', blob('PUBLIC-SERVER.md')],
   ['ENCRYPTION.md', 'what e2e protects, and what not', blob('ENCRYPTION.md')],
+  ['ROADMAP.md', 'what is next, what is not planned', blob('ROADMAP.md')],
   ['CONTRIBUTING.md', 'checks, tests, pull requests', blob('CONTRIBUTING.md')],
 ];
 ---
@@ -119,6 +130,7 @@ const docs = [
         <a class="brand" href="#top" aria-label="backchannel, top of page"><strong>BACKCHANNEL</strong><span>OPEN SOURCE RELAY</span></a>
         <nav aria-label="Primary">
           <a href="#how">HOW IT WORKS</a>
+          <a href="#roadmap">ROADMAP</a>
           <a href="#docs">DOCS</a>
           <a href={repo}>GITHUB ↗</a>
         </nav>
@@ -246,11 +258,32 @@ connected · ayush@hub · #design (owner)</pre>
         </div>
       </section>
 
-      <section class="row section section-last" id="docs" aria-labelledby="docs-title">
+      <section class="row section" id="roadmap" aria-labelledby="roadmap-title">
         <span class="rail rail-mark" aria-hidden="true">§05</span>
+        <div class="body">
+          <div class="section-head">
+            <h2 id="roadmap-title">Roadmap</h2>
+            <p class="label">[05] NO DATES, NO PROMISES</p>
+          </div>
+          <div class="table boundary" role="table" aria-label="Project roadmap">
+            <div class="th" role="row"><span role="columnheader">STATUS</span><span role="columnheader">ITEM</span><span role="columnheader">DETAIL</span></div>
+            {roadmap.map(([status, item, detail]) => (
+              <div class="tr" role="row">
+                <span role="cell"><span class={status === 'NEXT' ? 'tag' : undefined}>{status}</span></span>
+                <strong role="rowheader">{item}</strong>
+                <span role="cell">{detail}</span>
+              </div>
+            ))}
+          </div>
+          <p class="footnote">Full list with reasons in <a href={blob('ROADMAP.md')}>ROADMAP.md ↗</a></p>
+        </div>
+      </section>
+
+      <section class="row section section-last" id="docs" aria-labelledby="docs-title">
+        <span class="rail rail-mark" aria-hidden="true">§06</span>
         <div class="body split">
           <div class="split-intro">
-            <p class="label">[05] START / CONTRIBUTE</p>
+            <p class="label">[06] START / CONTRIBUTE</p>
             <h2 id="docs-title">Run it.<br />Read it.<br />Change it.</h2>
             <p>The code and docs live on GitHub under cinematicgenius007. Issues, documentation fixes, and pull requests are welcome.</p>
             <a class="btn btn-signal" href={repo}>&gt; OPEN ON GITHUB ↗</a>
